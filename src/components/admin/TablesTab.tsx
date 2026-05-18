@@ -98,7 +98,16 @@ export default function TablesTab() {
   };
 
   const getTableTokens = (tableId: string) => {
-    return tokens.filter((t) => t.tableId === tableId);
+    const tableTokens = tokens.filter((t) => t.tableId === tableId);
+    // Deduplicate by token string (keep the most recent entry)
+    const seen = new Map<string, typeof tableTokens[0]>();
+    for (const t of tableTokens) {
+      const existing = seen.get(t.token);
+      if (!existing || t.createdAt > existing.createdAt) {
+        seen.set(t.token, t);
+      }
+    }
+    return Array.from(seen.values());
   };
 
   return (
@@ -239,7 +248,7 @@ export default function TablesTab() {
                     New Token
                   </Button>
 
-                  {status === 'occupied' && (
+                  {status !== 'free' && (
                     <Button
                       variant="destructive"
                       size="sm"

@@ -175,6 +175,8 @@ export const useRestaurantStore = create<RestaurantState>()(
     // FETCH ALL DATA FROM SUPABASE
     // =============================================
     fetchAllData: async () => {
+      if (fetchInProgress) return; // Prevent concurrent fetches
+      fetchInProgress = true;
       try {
         const [tablesRes, tokensRes, sessionsRes, productsRes, ordersRes, itemsRes, auditRes] = await Promise.all([
           supabase.from('tables').select('*').order('number'),
@@ -186,11 +188,18 @@ export const useRestaurantStore = create<RestaurantState>()(
           supabase.from('audit_log').select('*').order('timestamp', { ascending: false }),
         ]);
 
-        const allItems = (itemsRes.data || []).map(rowToOrderItem);
+        // Deduplicate tokens by token string (keep the most recent)
+        const rawTokens = (tokensRes.data || []).map(rowToToken);
+        const tokenMap = new Map<string, Token>();
+        for (const t of rawTokens) {
+          const existing = tokenMap.get(t.token);
+          if (!existing || t.createdAt > existing.createdAt) {
+            tokenMap.set(t.token, t);
+          }
+        }
+        const dedupedTokens = Array.from(tokenMap.values());
 
         const orders = (ordersRes.data || []).map((row) => {
-          const orderItems = allItems.filter((i) => i.id !== undefined && allItems.some(ai => ai.id === i.id && (itemsRes.data || []).find(r => r.id === i.id && r.orderId === row.id)));
-          // Simpler approach: group items by orderId
           const itemsForOrder = (itemsRes.data || [])
             .filter((r: any) => r.orderId === row.id)
             .map(rowToOrderItem);
@@ -199,7 +208,7 @@ export const useRestaurantStore = create<RestaurantState>()(
 
         set({
           tables: (tablesRes.data || []).map(rowToTable),
-          tokens: (tokensRes.data || []).map(rowToToken),
+          tokens: dedupedTokens,
           sessions: (sessionsRes.data || []).map(rowToSession),
           products: (productsRes.data || []).map(rowToProduct),
           orders,
@@ -210,6 +219,8 @@ export const useRestaurantStore = create<RestaurantState>()(
       } catch (err) {
         console.error('Failed to fetch data from Supabase:', err);
         set({ loading: false });
+      } finally {
+        fetchInProgress = false;
       }
     },
 
@@ -338,22 +349,40 @@ export const useRestaurantStore = create<RestaurantState>()(
     freeTable: async (tableId: string) => {
       const table = get().tables.find((t) => t.id === tableId);
       if (!table) return;
+      const now = new Date().toISOString();
 
-      // Close active session if any
+      // Close active session directly (avoid calling closeSession which triggers extra audit + race conditions)
       if (table.currentSessionId) {
-        await get().closeSession(table.currentSessionId);
+        await supabase.from('sessions').update({ isActive: false, closedAt: now }).eq('id', table.currentSessionId);
       }
 
+      // Invalidate current token so customer can't reconnect
+      if (table.currentTokenId) {
+        await supabase.from('tokens').update({ isValid: false, invalidatedAt: now }).eq('id', table.currentTokenId);
+      }
+
+      // Clear table references
       const { error } = await supabase.from('tables').update({
         currentTokenId: null,
         currentSessionId: null,
       }).eq('id', tableId);
       if (error) { console.error('freeTable error:', error); return; }
 
+      // Update local state atomically
       set((state) => ({
         tables: state.tables.map((t) =>
           t.id === tableId ? { ...t, currentTokenId: null, currentSessionId: null } : t
         ),
+        sessions: table.currentSessionId
+          ? state.sessions.map((s) =>
+              s.id === table.currentSessionId ? { ...s, isActive: false, closedAt: now } : s
+            )
+          : state.sessions,
+        tokens: table.currentTokenId
+          ? state.tokens.map((t) =>
+              t.id === table.currentTokenId ? { ...t, isValid: false, invalidatedAt: now } : t
+            )
+          : state.tokens,
       }));
       await get().addAuditLog('table_freed', `Table "${table.name}" freed`);
     },
@@ -734,30 +763,28 @@ export const useRestaurantStore = create<RestaurantState>()(
   })
 );
 
+// Debounce Realtime refetches to prevent race conditions
+let realtimeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let fetchInProgress = false;
+
+function scheduleRefetch() {
+  if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
+  realtimeDebounceTimer = setTimeout(() => {
+    if (!fetchInProgress) {
+      useRestaurantStore.getState().fetchAllData();
+    }
+  }, 600);
+}
+
 // Realtime subscriptions for live updates
 if (typeof window !== 'undefined') {
-  // Subscribe to all table changes
-  const channels = [
-    supabase.channel('tables-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'tables' }, () => {
-      useRestaurantStore.getState().fetchAllData();
-    }).subscribe(),
-    supabase.channel('tokens-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'tokens' }, () => {
-      useRestaurantStore.getState().fetchAllData();
-    }).subscribe(),
-    supabase.channel('sessions-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'sessions' }, () => {
-      useRestaurantStore.getState().fetchAllData();
-    }).subscribe(),
-    supabase.channel('products-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
-      useRestaurantStore.getState().fetchAllData();
-    }).subscribe(),
-    supabase.channel('orders-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-      useRestaurantStore.getState().fetchAllData();
-    }).subscribe(),
-    supabase.channel('order-items-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, () => {
-      useRestaurantStore.getState().fetchAllData();
-    }).subscribe(),
-    supabase.channel('audit-log-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'audit_log' }, () => {
-      useRestaurantStore.getState().fetchAllData();
-    }).subscribe(),
-  ];
+  const tables = ['tables', 'tokens', 'sessions', 'products', 'orders', 'order_items', 'audit_log'];
+  tables.forEach((table) => {
+    supabase
+      .channel(`${table}-changes`)
+      .on('postgres_changes', { event: '*', schema: 'public', table }, () => {
+        scheduleRefetch();
+      })
+      .subscribe();
+  });
 }
