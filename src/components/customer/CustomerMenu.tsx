@@ -45,7 +45,7 @@ export default function CustomerMenu({ token }: CustomerMenuProps) {
   useEffect(() => {
     const interval = setInterval(() => {
       setTick((t) => t + 1);
-      // Sync from localStorage (for cross-tab updates)
+      // Sync from Supabase (for cross-tab/real-time updates)
       useRestaurantStore.getState().syncFromStorage();
     }, 3000);
     return () => clearInterval(interval);
@@ -98,8 +98,9 @@ export default function CustomerMenu({ token }: CustomerMenuProps) {
         }
         // Start a new session if we don't have one
         if (!sessionRef.current) {
-          const newSessionId = startSession(table.id, tokenObj.id);
-          sessionRef.current = newSessionId;
+          startSession(table.id, tokenObj.id).then((newSessionId) => {
+            sessionRef.current = newSessionId;
+          });
         }
       }
     }
@@ -107,14 +108,14 @@ export default function CustomerMenu({ token }: CustomerMenuProps) {
 
   const effectiveSessionId = activeSession?.id || sessionRef.current || '';
 
-  const handleSubmitOrder = useCallback(() => {
+  const handleSubmitOrder = useCallback(async () => {
     if (isSubmitting) return;
     const currentCart = useRestaurantStore.getState().cart;
     if (currentCart.length === 0) return;
 
     setIsSubmitting(true);
     try {
-      const order = createOrder(effectiveSessionId, table?.id || '', currentCart);
+      const order = await createOrder(effectiveSessionId, table?.id || '', currentCart);
       if (order) {
         toast.success('Order submitted successfully!', {
           description: `Total: €${order.total.toFixed(2)}`,

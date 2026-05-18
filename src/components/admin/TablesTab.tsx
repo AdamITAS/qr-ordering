@@ -38,15 +38,15 @@ export default function TablesTab() {
   const [qrTableName, setQrTableName] = useState('');
   const [expandedTable, setExpandedTable] = useState<string | null>(null);
 
-  const handleAddTable = () => {
+  const handleAddTable = async () => {
     if (!newTableName.trim() || !newTableNumber.trim()) return;
-    addTable(newTableName.trim(), parseInt(newTableNumber));
+    await addTable(newTableName.trim(), parseInt(newTableNumber));
     setNewTableName('');
     setNewTableNumber('');
     toast.success('Table added!');
   };
 
-  const handleGenerateQR = (table: Table) => {
+  const handleGenerateQR = async (table: Table) => {
     const currentToken = table.currentTokenId
       ? tokens.find((t) => t.id === table.currentTokenId)
       : null;
@@ -57,7 +57,7 @@ export default function TablesTab() {
       setQrModalOpen(true);
     } else {
       // Generate a new token first
-      const tokenStr = generateToken(table.id);
+      const tokenStr = await generateToken(table.id);
       setQrToken(tokenStr);
       setQrTableName(table.name);
       setQrModalOpen(true);
@@ -227,12 +227,12 @@ export default function TablesTab() {
                     variant="outline"
                     size="sm"
                     className="h-9 text-xs border-amber-300"
-                    onClick={() => {
+                    onClick={async () => {
                       // If current token is valid, invalidate it first
                       if (currentToken?.isValid) {
-                        invalidateToken(currentToken.id);
+                        await invalidateToken(currentToken.id);
                       }
-                      generateToken(table.id);
+                      await generateToken(table.id);
                     }}
                   >
                     <Plus className="h-3.5 w-3.5 mr-1" />

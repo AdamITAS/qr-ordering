@@ -15,7 +15,7 @@ export default function AppRouter() {
 
   useEffect(() => {
     initializeSeedData();
-  }, [initializeSeedData]);
+  }, []);
 
   useEffect(() => {
     const updateHash = () => {

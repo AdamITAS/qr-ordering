@@ -63,7 +63,11 @@ export default function OrdersTab() {
   // Poll for updates every 3 seconds
   useEffect(() => {
     const interval = setInterval(() => setTick((t) => t + 1), 3000);
-    return () => clearInterval(interval);
+    // Also sync from Supabase periodically
+    const syncInterval = setInterval(() => {
+      useRestaurantStore.getState().syncFromStorage();
+    }, 5000);
+    return () => { clearInterval(interval); clearInterval(syncInterval); };
   }, []);
 
   // Filter orders by status
