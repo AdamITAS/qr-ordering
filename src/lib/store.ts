@@ -589,19 +589,28 @@ export const useRestaurantStore = create<RestaurantState>()(
       // STEP 1: Check if previous session was closed by admin
       // This runs BEFORE any authorization check to prevent reload-after-free-table
       const prevSessionId = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(prevSessionKey) : null;
-      if (prevSessionId && !isQrScan) {
+
+      // If the value is "CLOSED", a previous session was closed by admin — always deny
+      if (prevSessionId === 'CLOSED' && !isQrScan) {
+        // Keep the CLOSED marker so subsequent reloads also get denied
+        sessionStorage.removeItem(sessionKey);
+        return null;
+      }
+
+      if (prevSessionId && prevSessionId !== 'CLOSED' && !isQrScan) {
         const prevSession = get().sessions.find(s => s.id === prevSessionId);
         if (prevSession && prevSession.closedAt) {
           // Previous session was closed by admin (Free Table / Paid)
-          // Clear ALL authorization flags so customer can't reconnect without re-scanning
+          // Mark as CLOSED instead of removing — this prevents the NEXT reload
+          // from thinking it's a fresh QR scan
+          sessionStorage.setItem(prevSessionKey, 'CLOSED');
           sessionStorage.removeItem(sessionKey);
-          sessionStorage.removeItem(prevSessionKey);
           return null;
         }
         // If session not found in store at all, treat as closed
         if (!prevSession) {
+          sessionStorage.setItem(prevSessionKey, 'CLOSED');
           sessionStorage.removeItem(sessionKey);
-          sessionStorage.removeItem(prevSessionKey);
           return null;
         }
       }

@@ -55,13 +55,14 @@ export default function CustomerMenu({ tableNumber }: CustomerMenuProps) {
       setConnectionError(false);
       try {
         // KEY SECURITY FIX: Only treat as QR scan on FIRST visit.
-        // If we have a previous session ID stored in sessionStorage, this is a reload,
-        // not a fresh QR scan. This prevents customers from reconnecting after
-        // admin does "Free Table" — because on reload, autoConnectTable will check
-        // if the previous session was closed and deny reconnection.
+        // We check sessionStorage for ANY previous session marker:
+        // - A session ID = this is a reload (not QR scan)
+        // - "CLOSED" = previous session was closed by admin (definitely not QR scan)
+        // This prevents customers from reconnecting after admin does "Free Table".
         const prevSessionKey = `qr-session-${tableNumber}`;
-        const hasPrevSession = typeof sessionStorage !== 'undefined' && !!sessionStorage.getItem(prevSessionKey);
-        const isQrScan = !hasPrevSession; // First visit = QR scan, reload = not QR scan
+        const prevValue = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(prevSessionKey) : null;
+        const hasPrevSession = !!prevValue; // Any value (session ID or "CLOSED") means not first visit
+        const isQrScan = !hasPrevSession; // First visit = QR scan, any reload = not QR scan
 
         const result = await autoConnectTable(tableNumber, isQrScan);
         if (result) {
