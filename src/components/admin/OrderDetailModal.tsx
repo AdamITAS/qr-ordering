@@ -6,6 +6,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -69,6 +70,9 @@ export default function OrderDetailModal({
               {statusLabels[order.status]}
             </Badge>
           </DialogTitle>
+          <DialogDescription className="text-zinc-400">
+            Order for {table?.name || 'Unknown'} — €{order.total.toFixed(2)}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">

@@ -350,14 +350,24 @@ export const useRestaurantStore = create<RestaurantState>()(
       if (!table) return;
       const now = new Date().toISOString();
 
-      // Close active session
-      if (table.currentSessionId) {
-        await supabase.from('sessions').update({ isActive: false, closedAt: now }).eq('id', table.currentSessionId);
+      // Find ALL unclosed sessions for this table (active OR inactive)
+      // When customer leaves page, markSessionInactive clears table.currentSessionId,
+      // so we must search by tableId, not just use currentSessionId
+      const unclosedSessions = get().sessions.filter(
+        (s) => s.tableId === tableId && !s.closedAt
+      );
+
+      // Close all unclosed sessions
+      for (const session of unclosedSessions) {
+        await supabase.from('sessions').update({ isActive: false, closedAt: now }).eq('id', session.id);
       }
 
-      // Invalidate current token
-      if (table.currentTokenId) {
-        await supabase.from('tokens').update({ isValid: false, invalidatedAt: now }).eq('id', table.currentTokenId);
+      // Invalidate ALL valid tokens for this table (not just currentTokenId)
+      const validTokens = get().tokens.filter(
+        (t) => t.tableId === tableId && t.isValid
+      );
+      for (const token of validTokens) {
+        await supabase.from('tokens').update({ isValid: false, invalidatedAt: now }).eq('id', token.id);
       }
 
       // Clear table references
@@ -367,26 +377,20 @@ export const useRestaurantStore = create<RestaurantState>()(
       }).eq('id', tableId);
       if (error) { console.error('freeTable error:', error); return; }
 
-      // Clear QR auth from sessionStorage so customer can't reconnect without re-scanning
-      if (typeof sessionStorage !== 'undefined') {
-        sessionStorage.removeItem(`qr-auth-table-${table.number}`);
-        sessionStorage.removeItem(`qr-session-${table.number}`);
-      }
-
       set((state) => ({
         tables: state.tables.map((t) =>
           t.id === tableId ? { ...t, currentTokenId: null, currentSessionId: null } : t
         ),
-        sessions: table.currentSessionId
-          ? state.sessions.map((s) =>
-              s.id === table.currentSessionId ? { ...s, isActive: false, closedAt: now } : s
-            )
-          : state.sessions,
-        tokens: table.currentTokenId
-          ? state.tokens.map((t) =>
-              t.id === table.currentTokenId ? { ...t, isValid: false, invalidatedAt: now } : t
-            )
-          : state.tokens,
+        sessions: state.sessions.map((s) =>
+          s.tableId === tableId && !s.closedAt
+            ? { ...s, isActive: false, closedAt: now }
+            : s
+        ),
+        tokens: state.tokens.map((t) =>
+          t.tableId === tableId && t.isValid
+            ? { ...t, isValid: false, invalidatedAt: now }
+            : t
+        ),
       }));
       await get().addAuditLog('table_freed', `Table "${table.name}" freed`);
     },
@@ -397,14 +401,22 @@ export const useRestaurantStore = create<RestaurantState>()(
       if (!table) return;
       const now = new Date().toISOString();
 
-      // Close active session
-      if (table.currentSessionId) {
-        await supabase.from('sessions').update({ isActive: false, closedAt: now }).eq('id', table.currentSessionId);
+      // Find ALL unclosed sessions for this table (active OR inactive)
+      const unclosedSessions = get().sessions.filter(
+        (s) => s.tableId === tableId && !s.closedAt
+      );
+
+      // Close all unclosed sessions
+      for (const session of unclosedSessions) {
+        await supabase.from('sessions').update({ isActive: false, closedAt: now }).eq('id', session.id);
       }
 
-      // Invalidate current token
-      if (table.currentTokenId) {
-        await supabase.from('tokens').update({ isValid: false, invalidatedAt: now }).eq('id', table.currentTokenId);
+      // Invalidate ALL valid tokens for this table
+      const validTokens = get().tokens.filter(
+        (t) => t.tableId === tableId && t.isValid
+      );
+      for (const token of validTokens) {
+        await supabase.from('tokens').update({ isValid: false, invalidatedAt: now }).eq('id', token.id);
       }
 
       // Clear table references
@@ -414,26 +426,20 @@ export const useRestaurantStore = create<RestaurantState>()(
       }).eq('id', tableId);
       if (error) { console.error('payAndFreeTable error:', error); return; }
 
-      // Clear QR auth from sessionStorage so customer can't reconnect without re-scanning
-      if (typeof sessionStorage !== 'undefined') {
-        sessionStorage.removeItem(`qr-auth-table-${table.number}`);
-        sessionStorage.removeItem(`qr-session-${table.number}`);
-      }
-
       set((state) => ({
         tables: state.tables.map((t) =>
           t.id === tableId ? { ...t, currentTokenId: null, currentSessionId: null } : t
         ),
-        sessions: table.currentSessionId
-          ? state.sessions.map((s) =>
-              s.id === table.currentSessionId ? { ...s, isActive: false, closedAt: now } : s
-            )
-          : state.sessions,
-        tokens: table.currentTokenId
-          ? state.tokens.map((t) =>
-              t.id === table.currentTokenId ? { ...t, isValid: false, invalidatedAt: now } : t
-            )
-          : state.tokens,
+        sessions: state.sessions.map((s) =>
+          s.tableId === tableId && !s.closedAt
+            ? { ...s, isActive: false, closedAt: now }
+            : s
+        ),
+        tokens: state.tokens.map((t) =>
+          t.tableId === tableId && t.isValid
+            ? { ...t, isValid: false, invalidatedAt: now }
+            : t
+        ),
       }));
       await get().addAuditLog('table_paid', `Table "${table.name}" paid and freed`);
     },
@@ -568,43 +574,74 @@ export const useRestaurantStore = create<RestaurantState>()(
     // Security: only reconnect if there's an active/inactive session.
     // If session was closed (Free Table / Paid), require re-scanning QR.
     // We use sessionStorage to track QR-scan authorization.
+    //
+    // CRITICAL: isQrScan should only be true on the FIRST visit.
+    // On page reload, isQrScan=false so we can check if the previous
+    // session was closed by admin. If so, we deny reconnection.
     // =============================================
     autoConnectTable: async (tableNumber: number, isQrScan: boolean = false) => {
       const table = get().tables.find((t) => t.number === tableNumber);
       if (!table) return null;
 
-      // Check if this connection is authorized (from QR scan)
       const sessionKey = `qr-auth-table-${tableNumber}`;
+      const prevSessionKey = `qr-session-${tableNumber}`;
+
+      // STEP 1: Check if previous session was closed by admin
+      // This runs BEFORE any authorization check to prevent reload-after-free-table
+      const prevSessionId = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(prevSessionKey) : null;
+      if (prevSessionId && !isQrScan) {
+        const prevSession = get().sessions.find(s => s.id === prevSessionId);
+        if (prevSession && prevSession.closedAt) {
+          // Previous session was closed by admin (Free Table / Paid)
+          // Clear ALL authorization flags so customer can't reconnect without re-scanning
+          sessionStorage.removeItem(sessionKey);
+          sessionStorage.removeItem(prevSessionKey);
+          return null;
+        }
+        // If session not found in store at all, treat as closed
+        if (!prevSession) {
+          sessionStorage.removeItem(sessionKey);
+          sessionStorage.removeItem(prevSessionKey);
+          return null;
+        }
+      }
+
+      // Check if this connection is authorized (from QR scan)
       const isAuthorized = isQrScan || (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(sessionKey) === 'true');
 
-      // Check if table has an active session
+      // STEP 2: Check for active session
       const activeSession = get().sessions.find(
         (s) => s.tableId === table.id && s.isActive
       );
       if (activeSession) {
-        // If authorized, allow reconnection to active session
         if (isAuthorized) {
           if (isQrScan) {
             sessionStorage.setItem(sessionKey, 'true');
           }
           const token = get().tokens.find((t) => t.id === activeSession.tokenId);
           if (token && token.isValid) {
+            sessionStorage.setItem(prevSessionKey, activeSession.id);
             return { tableId: table.id, sessionId: activeSession.id, token: token.token };
           }
           // Token invalid but session active — generate new token for same session
           const newTokenStr = await get().generateToken(table.id);
-          await supabase.from('sessions').update({ tokenId: get().tokens.find(t => t.token === newTokenStr)?.id || activeSession.tokenId }).eq('id', activeSession.id);
+          const newToken = get().tokens.find(t => t.token === newTokenStr);
+          if (newToken) {
+            await supabase.from('sessions').update({ tokenId: newToken.id }).eq('id', activeSession.id);
+          }
+          sessionStorage.setItem(prevSessionKey, activeSession.id);
           return { tableId: table.id, sessionId: activeSession.id, token: newTokenStr };
         }
         // Not authorized (page reload without QR) but active session exists — still allow
         // because the session is still active (admin hasn't freed the table)
         const token = get().tokens.find((t) => t.id === activeSession.tokenId);
         if (token && token.isValid) {
+          sessionStorage.setItem(prevSessionKey, activeSession.id);
           return { tableId: table.id, sessionId: activeSession.id, token: token.token };
         }
       }
 
-      // Check for inactive session (customer left page but didn't close)
+      // STEP 3: Check for inactive session (customer left page but didn't close)
       const inactiveSession = get().sessions.find(
         (s) => s.tableId === table.id && !s.isActive && !s.closedAt
       );
@@ -620,6 +657,7 @@ export const useRestaurantStore = create<RestaurantState>()(
             if (!token.isValid) {
               await get().restoreToken(token.id);
             }
+            sessionStorage.setItem(prevSessionKey, inactiveSession.id);
             return { tableId: table.id, sessionId: inactiveSession.id, token: token.token };
           }
           const newTokenStr = await get().generateToken(table.id);
@@ -627,12 +665,11 @@ export const useRestaurantStore = create<RestaurantState>()(
           if (newToken) {
             await supabase.from('sessions').update({ tokenId: newToken.id }).eq('id', inactiveSession.id);
           }
+          sessionStorage.setItem(prevSessionKey, inactiveSession.id);
           return { tableId: table.id, sessionId: inactiveSession.id, token: newTokenStr };
         }
         // Not authorized but inactive session — check if they were previously connected
         // Allow reconnection to inactive session only if sessionStorage has proof
-        const prevSessionKey = `qr-session-${tableNumber}`;
-        const prevSessionId = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(prevSessionKey) : null;
         if (prevSessionId === inactiveSession.id) {
           await get().reactivateSession(inactiveSession.id);
           const token = get().tokens.find((t) => t.id === inactiveSession.tokenId);
@@ -640,19 +677,20 @@ export const useRestaurantStore = create<RestaurantState>()(
             if (!token.isValid) {
               await get().restoreToken(token.id);
             }
+            sessionStorage.setItem(prevSessionKey, inactiveSession.id);
             return { tableId: table.id, sessionId: inactiveSession.id, token: token.token };
           }
         }
         // Otherwise, fall through to check if we should create new session
       }
 
-      // No active or inactive session (or closed session) — require QR scan
+      // STEP 4: No active or inactive session (or closed session) — require authorization
       if (!isAuthorized) {
         // Page reload after session was closed — don't auto-connect
         return null;
       }
 
-      // Authorized (QR scan) — create new session
+      // STEP 5: Authorized (QR scan) — create new session
       if (isQrScan) {
         sessionStorage.setItem(sessionKey, 'true');
       }
@@ -664,7 +702,6 @@ export const useRestaurantStore = create<RestaurantState>()(
       if (!sessionId) return null;
 
       // Store session ID for reconnection tracking
-      const prevSessionKey = `qr-session-${tableNumber}`;
       sessionStorage.setItem(prevSessionKey, sessionId);
 
       return { tableId: table.id, sessionId, token: tokenStr };

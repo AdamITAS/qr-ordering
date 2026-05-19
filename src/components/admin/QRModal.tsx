@@ -6,6 +6,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Copy, Printer, Download } from 'lucide-react';
@@ -58,10 +59,10 @@ export default function QRModal({
       <DialogContent className="sm:max-w-md bg-zinc-900 border-zinc-800">
         <DialogHeader>
           <DialogTitle className="text-white text-lg">QR Code — {tableName}</DialogTitle>
-          <p className="text-xs text-zinc-500 mt-1">
+          <DialogDescription className="text-zinc-500">
             This QR code is permanent. Print it once and place it on the table.
             When a customer scans it, a new session starts automatically.
-          </p>
+          </DialogDescription>
         </DialogHeader>
         <div className="qr-printable flex flex-col items-center gap-4 py-4">
           <p className="text-sm text-zinc-400 font-medium">{tableName}</p>

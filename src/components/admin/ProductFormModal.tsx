@@ -6,6 +6,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -73,34 +74,41 @@ export default function ProductFormModal({
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
-        // Center-crop to 3:2 aspect ratio (good framing for food)
+        // Smart center-crop to 3:2 aspect ratio (ideal for food photography)
+        // Algorithm: crop from center horizontally, bias slightly toward top
+        // vertically (food is usually in the center-upper portion of photos)
         const canvas = document.createElement('canvas');
-        const targetWidth = 600;
-        const targetHeight = 400; // 3:2 ratio — better food framing
+        const targetWidth = 800;
+        const targetHeight = 533; // ~3:2 ratio — professional food framing
         canvas.width = targetWidth;
         canvas.height = targetHeight;
 
         const ctx = canvas.getContext('2d')!;
-        // Fill with white background
-        ctx.fillStyle = '#ffffff';
+        // Fill with a neutral background in case of small images
+        ctx.fillStyle = '#f5f5f5';
         ctx.fillRect(0, 0, targetWidth, targetHeight);
 
         const sourceAspect = img.width / img.height;
         const targetAspect = targetWidth / targetHeight;
 
         let sx = 0, sy = 0, sw = img.width, sh = img.height;
+
         if (sourceAspect > targetAspect) {
-          // Image is wider — crop sides
+          // Image is wider than target — crop sides (center horizontally)
           sw = img.height * targetAspect;
           sx = (img.width - sw) / 2;
         } else {
-          // Image is taller — crop top/bottom (crop from bottom to keep food centered)
+          // Image is taller than target — crop top/bottom
+          // Bias toward the top 40% of the image (food is typically in upper-center)
           sh = img.width / targetAspect;
-          sy = (img.height - sh) / 3; // Bias toward top to keep food in frame
+          // Use 1/3 offset from top instead of center to keep food visible
+          sy = (img.height - sh) * 0.33;
+          // Clamp to valid range
+          sy = Math.max(0, Math.min(sy, img.height - sh));
         }
 
         ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
-        setImageUrl(canvas.toDataURL('image/jpeg', 0.85));
+        setImageUrl(canvas.toDataURL('image/jpeg', 0.9));
       };
       img.src = ev.target?.result as string;
     };
@@ -158,6 +166,9 @@ export default function ProductFormModal({
       <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto bg-zinc-900 border-zinc-800">
         <DialogHeader>
           <DialogTitle className="text-white">{product ? 'Edit Product' : 'Add Product'}</DialogTitle>
+          <DialogDescription className="text-zinc-400">
+            {product ? 'Update product details below.' : 'Fill in the details to add a new product.'}
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-2">

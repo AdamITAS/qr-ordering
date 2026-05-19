@@ -1,12 +1,13 @@
 'use client';
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useState } from 'react';
 import { useRestaurantStore } from '@/lib/store';
 import { getReceiptNumber } from '@/lib/types';
 import { Button } from '@/components/ui/button';
-import { Download, Share2, Image as ImageIcon } from 'lucide-react';
+import { Download, Share2, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toPng } from 'html-to-image';
+import { toast } from 'sonner';
 
 interface ReceiptViewProps {
   tableId: string;
@@ -19,6 +20,7 @@ export default function ReceiptView({ tableId, sessionId, showDownload = true }:
   const orders = useRestaurantStore((s) => s.orders);
   const sessions = useRestaurantStore((s) => s.sessions);
   const receiptRef = useRef<HTMLDivElement>(null);
+  const [saving, setSaving] = useState(false);
 
   const table = tables.find((t) => t.id === tableId);
   const session = sessions.find((s) => s.id === sessionId);
@@ -34,19 +36,25 @@ export default function ReceiptView({ tableId, sessionId, showDownload = true }:
     : 0;
 
   const handleSaveImage = useCallback(async () => {
-    if (!receiptRef.current) return;
+    if (!receiptRef.current || saving) return;
+    setSaving(true);
 
     try {
+      // Generate high-quality PNG image of the receipt
       const dataUrl = await toPng(receiptRef.current, {
         backgroundColor: '#ffffff',
         pixelRatio: 3,
         cacheBust: true,
+        // Skip fonts that might cause issues
+        fontEmbedCSS: '',
+        skipAutoScale: true,
       });
 
-      // Try Web Share API first (best for mobile)
+      // Try Web Share API first (best for mobile — opens share sheet)
       if (navigator.share && navigator.canShare) {
         try {
-          const blob = await (await fetch(dataUrl)).blob();
+          const response = await fetch(dataUrl);
+          const blob = await response.blob();
           const file = new File([blob], `receipt-${receiptNumber}.png`, { type: 'image/png' });
           if (navigator.canShare({ files: [file] })) {
             await navigator.share({
@@ -54,10 +62,15 @@ export default function ReceiptView({ tableId, sessionId, showDownload = true }:
               title: `Receipt #${receiptNumber}`,
               text: `Receipt for ${tableName}`,
             });
+            toast.success('Receipt shared!');
             return;
           }
-        } catch (shareErr) {
-          // User cancelled share or not supported — fall through to download
+        } catch (shareErr: any) {
+          // User cancelled share dialog — that's fine, don't show error
+          if (shareErr?.name === 'AbortError') {
+            return;
+          }
+          // Other share errors — fall through to download
         }
       }
 
@@ -65,13 +78,93 @@ export default function ReceiptView({ tableId, sessionId, showDownload = true }:
       const link = document.createElement('a');
       link.download = `receipt-${receiptNumber}-${tableName.replace(/\s+/g, '-').toLowerCase()}.png`;
       link.href = dataUrl;
+      link.style.display = 'none';
       document.body.appendChild(link);
       link.click();
-      document.body.removeChild(link);
+
+      // Cleanup after a delay to ensure download starts
+      setTimeout(() => {
+        document.body.removeChild(link);
+      }, 100);
+
+      toast.success('Receipt saved as image!');
     } catch (err) {
       console.error('Failed to save receipt image:', err);
+
+      // Fallback: open receipt in new tab so user can long-press save (iOS Safari)
+      try {
+        const printWindow = window.open('', '_blank');
+        if (printWindow && receiptRef.current) {
+          printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+            <head><title>Receipt #${receiptNumber}</title></head>
+            <body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#fff;">
+              ${receiptRef.current.outerHTML}
+              <p style="position:fixed;bottom:10px;left:0;right:0;text-align:center;color:#999;font-size:12px;">
+                Long-press the image to save it to your device
+              </p>
+            </body></html>
+          `);
+          printWindow.document.close();
+          toast.info('Receipt opened in new tab — long-press to save');
+        }
+      } catch (fallbackErr) {
+        toast.error('Could not save receipt. Please take a screenshot instead.');
+      }
+    } finally {
+      setSaving(false);
     }
-  }, [tableName, receiptNumber]);
+  }, [tableName, receiptNumber, saving]);
+
+  const handleShare = useCallback(async () => {
+    if (!receiptRef.current || saving) return;
+    setSaving(true);
+
+    try {
+      const dataUrl = await toPng(receiptRef.current, {
+        backgroundColor: '#ffffff',
+        pixelRatio: 3,
+        cacheBust: true,
+        fontEmbedCSS: '',
+        skipAutoScale: true,
+      });
+
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+      const file = new File([blob], `receipt-${receiptNumber}.png`, { type: 'image/png' });
+
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: `Receipt #${receiptNumber}`,
+            text: `Receipt for ${tableName} — Total: ${sessionTotal.toFixed(2)} EUR`,
+          });
+          toast.success('Receipt shared!');
+        } catch (shareErr: any) {
+          if (shareErr?.name !== 'AbortError') {
+            toast.error('Share failed. Try "Save Image" instead.');
+          }
+        }
+      } else {
+        // No Web Share API — download instead
+        const link = document.createElement('a');
+        link.download = `receipt-${receiptNumber}-${tableName.replace(/\s+/g, '-').toLowerCase()}.png`;
+        link.href = dataUrl;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => document.body.removeChild(link), 100);
+        toast.success('Receipt downloaded!');
+      }
+    } catch (err) {
+      console.error('Failed to share receipt:', err);
+      toast.error('Could not share receipt. Try "Save Image" instead.');
+    } finally {
+      setSaving(false);
+    }
+  }, [tableName, receiptNumber, sessionTotal, saving]);
 
   if (sessionOrders.length === 0) {
     return (
@@ -91,27 +184,48 @@ export default function ReceiptView({ tableId, sessionId, showDownload = true }:
             size="sm"
             className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 h-11 px-4"
             onClick={handleSaveImage}
+            disabled={saving}
           >
-            <Download className="h-4 w-4 mr-2" />
-            Save Image
+            {saving ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4 mr-2" />
+            )}
+            {saving ? 'Saving...' : 'Save Image'}
           </Button>
           <Button
             variant="outline"
             size="sm"
             className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 h-11 px-4"
-            onClick={handleSaveImage}
+            onClick={handleShare}
+            disabled={saving}
           >
-            <Share2 className="h-4 w-4 mr-2" />
+            {saving ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Share2 className="h-4 w-4 mr-2" />
+            )}
             Share
           </Button>
         </div>
       )}
 
       {/* Receipt content — white background for clean image capture */}
+      {/* IMPORTANT: Use ONLY inline styles here (no Tailwind classes) */}
+      {/* because html-to-image cannot resolve CSS custom properties used by Tailwind */}
       <div
         ref={receiptRef}
-        className="bg-white rounded-xl border-2 border-dashed border-zinc-300 p-6 max-w-sm mx-auto"
-        style={{ fontFamily: "'Courier New', monospace", fontSize: '12px', color: '#000' }}
+        style={{
+          backgroundColor: '#ffffff',
+          borderRadius: '12px',
+          border: '2px dashed #d4d4d4',
+          padding: '24px',
+          maxWidth: '384px',
+          margin: '0 auto',
+          fontFamily: "'Courier New', Courier, monospace",
+          fontSize: '12px',
+          color: '#000000',
+        }}
       >
         {/* Header */}
         <div style={{ textAlign: 'center', marginBottom: '16px' }}>
@@ -183,9 +297,9 @@ export default function ReceiptView({ tableId, sessionId, showDownload = true }:
 
         {/* Footer */}
         <div style={{ textAlign: 'center', marginTop: '16px', borderTop: '1px dashed #ddd', paddingTop: '12px' }}>
-          <p style={{ fontSize: '9px', color: '#666' }}>Grazie per la visita!</p>
-          <p style={{ fontSize: '9px', color: '#666' }}>Thank you for dining with us!</p>
-          <p style={{ fontSize: '8px', color: '#999', marginTop: '4px' }}>
+          <p style={{ fontSize: '9px', color: '#666', margin: 0 }}>Grazie per la visita!</p>
+          <p style={{ fontSize: '9px', color: '#666', margin: 0 }}>Thank you for dining with us!</p>
+          <p style={{ fontSize: '8px', color: '#999', marginTop: '4px', margin: '4px 0 0 0' }}>
             Receipt #{receiptNumber} — {format(new Date(), 'dd/MM/yyyy HH:mm')}
           </p>
         </div>

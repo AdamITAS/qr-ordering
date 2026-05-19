@@ -54,9 +54,16 @@ export default function CustomerMenu({ tableNumber }: CustomerMenuProps) {
       setConnecting(true);
       setConnectionError(false);
       try {
-        // First connection counts as QR scan if we have a table number in URL
-        // (the only way to get here is by scanning QR)
-        const result = await autoConnectTable(tableNumber, true);
+        // KEY SECURITY FIX: Only treat as QR scan on FIRST visit.
+        // If we have a previous session ID stored in sessionStorage, this is a reload,
+        // not a fresh QR scan. This prevents customers from reconnecting after
+        // admin does "Free Table" — because on reload, autoConnectTable will check
+        // if the previous session was closed and deny reconnection.
+        const prevSessionKey = `qr-session-${tableNumber}`;
+        const hasPrevSession = typeof sessionStorage !== 'undefined' && !!sessionStorage.getItem(prevSessionKey);
+        const isQrScan = !hasPrevSession; // First visit = QR scan, reload = not QR scan
+
+        const result = await autoConnectTable(tableNumber, isQrScan);
         if (result) {
           setConnectedTableId(result.tableId);
           setConnectedSessionId(result.sessionId);
@@ -147,7 +154,8 @@ export default function CustomerMenu({ tableNumber }: CustomerMenuProps) {
 
   // Get session status
   const currentSession = sessions.find(s => s.id === connectedSessionId);
-  const isSessionClosed = currentSession ? !!currentSession.closedAt : false;
+  // If session not found in store, treat as closed (admin freed it + realtime hasn't updated yet)
+  const isSessionClosed = currentSession ? !!currentSession.closedAt : !!connectedSessionId;
   const isSessionInactive = currentSession ? !currentSession.isActive && !currentSession.closedAt : false;
 
   const effectiveSessionId = connectedSessionId;

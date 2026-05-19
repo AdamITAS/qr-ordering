@@ -13,6 +13,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import {
   QrCode,
@@ -218,7 +219,12 @@ export default function TablesTab() {
                       </Button>
                       <Button
                         className="bg-emerald-600 hover:bg-emerald-700 text-white h-11 text-sm flex-1 font-semibold"
-                        onClick={() => payAndFreeTable(table.id)}
+                        onClick={() => {
+                          if (window.confirm(`Mark "${table.name}" as paid and free the table?`)) {
+                            payAndFreeTable(table.id);
+                            toast.success(`Table "${table.name}" marked as paid and freed`);
+                          }
+                        }}
                       >
                         <CheckCircle className="h-4 w-4 mr-2" />
                         Paid
@@ -230,7 +236,12 @@ export default function TablesTab() {
                     <Button
                       variant="outline"
                       className="border-red-800 text-red-400 hover:bg-red-900/30 h-11 text-sm"
-                      onClick={() => freeTable(table.id)}
+                      onClick={() => {
+                        if (window.confirm(`Free "${table.name}"? This will close the session and the customer will need to re-scan the QR code.`)) {
+                          freeTable(table.id);
+                          toast.success(`Table "${table.name}" freed`);
+                        }
+                      }}
                     >
                       <XCircle className="h-4 w-4 mr-2" />
                       Free
@@ -269,6 +280,9 @@ export default function TablesTab() {
               <Receipt className="h-5 w-5 text-amber-500" />
               Receipt
             </DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              Session receipt for {tables.find(t => t.id === receiptTableId)?.name || 'table'}
+            </DialogDescription>
           </DialogHeader>
           <ReceiptView
             tableId={receiptTableId}
