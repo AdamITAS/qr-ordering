@@ -52,7 +52,7 @@ export default function ProductCard({ product }: ProductCardProps) {
           : 'hover:border-amber-600/30'
       }`}
     >
-      <div className="aspect-[4/3] bg-zinc-800 flex items-center justify-center relative">
+      <div className="aspect-[3/2] bg-zinc-800 flex items-center justify-center relative">
         {product.imageUrl ? (
           <img
             src={product.imageUrl}

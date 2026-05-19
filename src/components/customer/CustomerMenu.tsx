@@ -54,7 +54,9 @@ export default function CustomerMenu({ tableNumber }: CustomerMenuProps) {
       setConnecting(true);
       setConnectionError(false);
       try {
-        const result = await autoConnectTable(tableNumber);
+        // First connection counts as QR scan if we have a table number in URL
+        // (the only way to get here is by scanning QR)
+        const result = await autoConnectTable(tableNumber, true);
         if (result) {
           setConnectedTableId(result.tableId);
           setConnectedSessionId(result.sessionId);
@@ -195,9 +197,11 @@ export default function CustomerMenu({ tableNumber }: CustomerMenuProps) {
           <div className="w-16 h-16 rounded-2xl bg-red-900/50 flex items-center justify-center mx-auto mb-4">
             <AlertTriangle className="h-8 w-8 text-red-400" />
           </div>
-          <h1 className="text-2xl font-bold text-red-400 mb-2">Table Not Found</h1>
+          <h1 className="text-2xl font-bold text-red-400 mb-2">Session Ended</h1>
           <p className="text-zinc-400">
-            Table #{tableNumber} doesn't exist. Please ask your server for assistance.
+            {!table
+              ? `Table #${tableNumber} doesn't exist. Please ask your server for assistance.`
+              : 'Your session has been closed. Please scan the QR code on your table to start a new session.'}
           </p>
         </div>
       </div>

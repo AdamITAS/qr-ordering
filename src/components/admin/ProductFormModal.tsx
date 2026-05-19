@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useRestaurantStore } from '@/lib/store';
 import type { Product } from '@/lib/types';
+import { Camera, Upload, Trash2 } from 'lucide-react';
 
 interface ProductFormModalProps {
   open: boolean;
@@ -42,6 +43,7 @@ export default function ProductFormModal({
   const [isAvailable, setIsAvailable] = useState(product?.isAvailable ?? true);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const handleOpenChange = (newOpen: boolean) => {
     if (newOpen) {
@@ -66,23 +68,23 @@ export default function ProductFormModal({
     onOpenChange(newOpen);
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const processImage = (file: File) => {
     const reader = new FileReader();
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
-        // Crop to 3:1 aspect ratio (matching card display)
+        // Center-crop to 3:2 aspect ratio (good framing for food)
         const canvas = document.createElement('canvas');
         const targetWidth = 600;
-        const targetHeight = 200; // 3:1 ratio
+        const targetHeight = 400; // 3:2 ratio — better food framing
         canvas.width = targetWidth;
         canvas.height = targetHeight;
 
         const ctx = canvas.getContext('2d')!;
-        // Center-crop the image
+        // Fill with white background
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, targetWidth, targetHeight);
+
         const sourceAspect = img.width / img.height;
         const targetAspect = targetWidth / targetHeight;
 
@@ -92,9 +94,9 @@ export default function ProductFormModal({
           sw = img.height * targetAspect;
           sx = (img.width - sw) / 2;
         } else {
-          // Image is taller — crop top/bottom
+          // Image is taller — crop top/bottom (crop from bottom to keep food centered)
           sh = img.width / targetAspect;
-          sy = (img.height - sh) / 2;
+          sy = (img.height - sh) / 3; // Bias toward top to keep food in frame
         }
 
         ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
@@ -103,6 +105,22 @@ export default function ProductFormModal({
       img.src = ev.target?.result as string;
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    processImage(file);
+    // Reset input so same file can be selected again
+    e.target.value = '';
+  };
+
+  const handleCameraCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    processImage(file);
+    // Reset input so camera can be used again
+    e.target.value = '';
   };
 
   const handleSave = () => {
@@ -229,6 +247,7 @@ export default function ProductFormModal({
             </div>
           </div>
 
+          {/* Image: Camera + Upload */}
           <div className="space-y-2">
             <Label className="text-zinc-300">Image</Label>
             <div className="flex items-center gap-2">
@@ -236,32 +255,54 @@ export default function ProductFormModal({
                 type="button"
                 variant="outline"
                 size="sm"
-                className="border-zinc-700 text-zinc-300 h-10"
+                className="border-zinc-700 text-amber-400 hover:bg-amber-900/20 h-11 px-4"
+                onClick={() => cameraInputRef.current?.click()}
+              >
+                <Camera className="h-4 w-4 mr-2" />
+                Take Photo
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 h-11 px-4"
                 onClick={() => fileInputRef.current?.click()}
               >
-                Upload Image
+                <Upload className="h-4 w-4 mr-2" />
+                Upload
               </Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleImageUpload}
-              />
               {imageUrl && (
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="text-red-400 h-10"
+                  className="text-red-400 hover:text-red-300 h-11"
                   onClick={() => setImageUrl('')}
                 >
+                  <Trash2 className="h-4 w-4 mr-1" />
                   Remove
                 </Button>
               )}
+              {/* Hidden camera input — opens device camera directly */}
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={handleCameraCapture}
+              />
+              {/* Hidden file input — gallery/file picker */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleFileUpload}
+              />
             </div>
             {imageUrl && (
-              <div className="w-full max-w-[200px] aspect-[3/1] rounded-lg overflow-hidden border border-zinc-700">
+              <div className="w-full max-w-[240px] aspect-[3/2] rounded-lg overflow-hidden border border-zinc-700">
                 <img
                   src={imageUrl}
                   alt="Preview"

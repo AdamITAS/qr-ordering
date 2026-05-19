@@ -126,7 +126,7 @@ interface RestaurantState {
   reactivateSession: (sessionId: string) => Promise<void>;
 
   // Auto-connect: when customer scans QR for a table number
-  autoConnectTable: (tableNumber: number) => Promise<{ tableId: string; sessionId: string; token: string } | null>;
+  autoConnectTable: (tableNumber: number, isQrScan?: boolean) => Promise<{ tableId: string; sessionId: string; token: string } | null>;
 
   // Product actions
   addProduct: (product: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'isArchived'>) => Promise<void>;
@@ -367,6 +367,12 @@ export const useRestaurantStore = create<RestaurantState>()(
       }).eq('id', tableId);
       if (error) { console.error('freeTable error:', error); return; }
 
+      // Clear QR auth from sessionStorage so customer can't reconnect without re-scanning
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem(`qr-auth-table-${table.number}`);
+        sessionStorage.removeItem(`qr-session-${table.number}`);
+      }
+
       set((state) => ({
         tables: state.tables.map((t) =>
           t.id === tableId ? { ...t, currentTokenId: null, currentSessionId: null } : t
@@ -407,6 +413,12 @@ export const useRestaurantStore = create<RestaurantState>()(
         currentSessionId: null,
       }).eq('id', tableId);
       if (error) { console.error('payAndFreeTable error:', error); return; }
+
+      // Clear QR auth from sessionStorage so customer can't reconnect without re-scanning
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem(`qr-auth-table-${table.number}`);
+        sessionStorage.removeItem(`qr-session-${table.number}`);
+      }
 
       set((state) => ({
         tables: state.tables.map((t) =>
@@ -553,59 +565,107 @@ export const useRestaurantStore = create<RestaurantState>()(
 
     // =============================================
     // AUTO-CONNECT: Customer scans QR for a table number
+    // Security: only reconnect if there's an active/inactive session.
+    // If session was closed (Free Table / Paid), require re-scanning QR.
+    // We use sessionStorage to track QR-scan authorization.
     // =============================================
-    autoConnectTable: async (tableNumber: number) => {
+    autoConnectTable: async (tableNumber: number, isQrScan: boolean = false) => {
       const table = get().tables.find((t) => t.number === tableNumber);
       if (!table) return null;
+
+      // Check if this connection is authorized (from QR scan)
+      const sessionKey = `qr-auth-table-${tableNumber}`;
+      const isAuthorized = isQrScan || (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(sessionKey) === 'true');
 
       // Check if table has an active session
       const activeSession = get().sessions.find(
         (s) => s.tableId === table.id && s.isActive
       );
       if (activeSession) {
-        // Reconnect to existing session
+        // If authorized, allow reconnection to active session
+        if (isAuthorized) {
+          if (isQrScan) {
+            sessionStorage.setItem(sessionKey, 'true');
+          }
+          const token = get().tokens.find((t) => t.id === activeSession.tokenId);
+          if (token && token.isValid) {
+            return { tableId: table.id, sessionId: activeSession.id, token: token.token };
+          }
+          // Token invalid but session active — generate new token for same session
+          const newTokenStr = await get().generateToken(table.id);
+          await supabase.from('sessions').update({ tokenId: get().tokens.find(t => t.token === newTokenStr)?.id || activeSession.tokenId }).eq('id', activeSession.id);
+          return { tableId: table.id, sessionId: activeSession.id, token: newTokenStr };
+        }
+        // Not authorized (page reload without QR) but active session exists — still allow
+        // because the session is still active (admin hasn't freed the table)
         const token = get().tokens.find((t) => t.id === activeSession.tokenId);
         if (token && token.isValid) {
           return { tableId: table.id, sessionId: activeSession.id, token: token.token };
         }
-        // Token invalid but session active — generate new token for same session
-        const newTokenStr = await get().generateToken(table.id);
-        // Update session's tokenId to new token
-        await supabase.from('sessions').update({ tokenId: get().tokens.find(t => t.token === newTokenStr)?.id || activeSession.tokenId }).eq('id', activeSession.id);
-        return { tableId: table.id, sessionId: activeSession.id, token: newTokenStr };
       }
 
-      // Check for inactive session (customer left and came back)
+      // Check for inactive session (customer left page but didn't close)
       const inactiveSession = get().sessions.find(
         (s) => s.tableId === table.id && !s.isActive && !s.closedAt
       );
       if (inactiveSession) {
-        // Reactivate the session
-        await get().reactivateSession(inactiveSession.id);
-        const token = get().tokens.find((t) => t.id === inactiveSession.tokenId);
-        if (token) {
-          // Restore token if needed
-          if (!token.isValid) {
-            await get().restoreToken(token.id);
+        // Only reactivate if authorized (was connected before or QR scan)
+        if (isAuthorized) {
+          if (isQrScan) {
+            sessionStorage.setItem(sessionKey, 'true');
           }
-          return { tableId: table.id, sessionId: inactiveSession.id, token: token.token };
+          await get().reactivateSession(inactiveSession.id);
+          const token = get().tokens.find((t) => t.id === inactiveSession.tokenId);
+          if (token) {
+            if (!token.isValid) {
+              await get().restoreToken(token.id);
+            }
+            return { tableId: table.id, sessionId: inactiveSession.id, token: token.token };
+          }
+          const newTokenStr = await get().generateToken(table.id);
+          const newToken = get().tokens.find(t => t.token === newTokenStr);
+          if (newToken) {
+            await supabase.from('sessions').update({ tokenId: newToken.id }).eq('id', inactiveSession.id);
+          }
+          return { tableId: table.id, sessionId: inactiveSession.id, token: newTokenStr };
         }
-        // Generate new token if old one is gone
-        const newTokenStr = await get().generateToken(table.id);
-        const newToken = get().tokens.find(t => t.token === newTokenStr);
-        if (newToken) {
-          await supabase.from('sessions').update({ tokenId: newToken.id }).eq('id', inactiveSession.id);
+        // Not authorized but inactive session — check if they were previously connected
+        // Allow reconnection to inactive session only if sessionStorage has proof
+        const prevSessionKey = `qr-session-${tableNumber}`;
+        const prevSessionId = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(prevSessionKey) : null;
+        if (prevSessionId === inactiveSession.id) {
+          await get().reactivateSession(inactiveSession.id);
+          const token = get().tokens.find((t) => t.id === inactiveSession.tokenId);
+          if (token) {
+            if (!token.isValid) {
+              await get().restoreToken(token.id);
+            }
+            return { tableId: table.id, sessionId: inactiveSession.id, token: token.token };
+          }
         }
-        return { tableId: table.id, sessionId: inactiveSession.id, token: newTokenStr };
+        // Otherwise, fall through to check if we should create new session
       }
 
-      // No active or inactive session — create new one
+      // No active or inactive session (or closed session) — require QR scan
+      if (!isAuthorized) {
+        // Page reload after session was closed — don't auto-connect
+        return null;
+      }
+
+      // Authorized (QR scan) — create new session
+      if (isQrScan) {
+        sessionStorage.setItem(sessionKey, 'true');
+      }
       const tokenStr = await get().generateToken(table.id);
       const newToken = get().tokens.find(t => t.token === tokenStr);
       if (!newToken) return null;
 
       const sessionId = await get().startSession(table.id, newToken.id);
       if (!sessionId) return null;
+
+      // Store session ID for reconnection tracking
+      const prevSessionKey = `qr-session-${tableNumber}`;
+      sessionStorage.setItem(prevSessionKey, sessionId);
 
       return { tableId: table.id, sessionId, token: tokenStr };
     },
