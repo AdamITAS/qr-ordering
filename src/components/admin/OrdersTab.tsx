@@ -15,15 +15,15 @@ import {
 } from '@/components/ui/dialog';
 import { format } from 'date-fns';
 import { Receipt, ChevronDown, ChevronUp, UtensilsCrossed, History, ShoppingCart } from 'lucide-react';
-import type { Order, OrderStatus } from '@/lib/types';
+import type { Order, OrderStatus, TableSession } from '@/lib/types';
 
 const statusColors: Record<string, string> = {
-  pending: 'bg-yellow-100 text-yellow-800 border-yellow-300',
-  confirmed: 'bg-blue-100 text-blue-800 border-blue-300',
-  preparing: 'bg-orange-100 text-orange-800 border-orange-300',
-  ready: 'bg-green-100 text-green-800 border-green-300',
-  delivered: 'bg-gray-100 text-gray-600 border-gray-300',
-  cancelled: 'bg-red-100 text-red-800 border-red-300',
+  pending: 'bg-yellow-900/50 text-yellow-400 border-yellow-700',
+  confirmed: 'bg-blue-900/50 text-blue-400 border-blue-700',
+  preparing: 'bg-orange-900/50 text-orange-400 border-orange-700',
+  ready: 'bg-emerald-900/50 text-emerald-400 border-emerald-700',
+  delivered: 'bg-zinc-800 text-zinc-500 border-zinc-600',
+  cancelled: 'bg-red-900/50 text-red-400 border-red-700',
 };
 
 const statusLabels: Record<string, string> = {
@@ -57,11 +57,10 @@ export default function OrdersTab() {
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [receiptTableId, setReceiptTableId] = useState('');
   const [receiptSessionId, setReceiptSessionId] = useState('');
-  const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
+  const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<'active' | 'history'>('active');
   const [, setTick] = useState(0);
 
-  // Poll for updates every 3 seconds
   useEffect(() => {
     const interval = setInterval(() => setTick((t) => t + 1), 3000);
     const syncInterval = setInterval(() => {
@@ -70,32 +69,38 @@ export default function OrdersTab() {
     return () => { clearInterval(interval); clearInterval(syncInterval); };
   }, []);
 
-  // Separate active orders (from active sessions) vs history (from closed sessions)
+  // Separate orders by session status
   const activeSessionIds = new Set(sessions.filter((s) => s.isActive).map((s) => s.id));
+  const inactiveSessionIds = new Set(sessions.filter((s) => !s.isActive && !s.closedAt).map((s) => s.id));
+  const closedSessionIds = new Set(sessions.filter((s) => s.closedAt).map((s) => s.id));
 
-  const activeOrders = orders.filter((o) => activeSessionIds.has(o.sessionId));
-  const historyOrders = orders.filter((o) => !activeSessionIds.has(o.sessionId));
+  // Active orders: from active or inactive sessions
+  const openSessionIds = new Set([...activeSessionIds, ...inactiveSessionIds]);
+  const activeOrders = orders.filter((o) => openSessionIds.has(o.sessionId));
+  const historyOrders = orders.filter((o) => closedSessionIds.has(o.sessionId));
 
-  // Current display list
   const displayOrders = viewMode === 'active' ? activeOrders : historyOrders;
 
-  // Filter orders by status
   const filteredOrders = displayOrders
     .filter((o) => statusFilter === 'all' || o.status === statusFilter)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  // Group orders by table
-  const ordersByTable = new Map<string, Order[]>();
+  // Group by SESSION, not table — this is the key fix for the history bug
+  const ordersBySession = new Map<string, { session: TableSession | undefined; orders: Order[] }>();
   filteredOrders.forEach((order) => {
-    const existing = ordersByTable.get(order.tableId) || [];
-    existing.push(order);
-    ordersByTable.set(order.tableId, existing);
+    const existing = ordersBySession.get(order.sessionId);
+    if (existing) {
+      existing.orders.push(order);
+    } else {
+      const session = sessions.find(s => s.id === order.sessionId);
+      ordersBySession.set(order.sessionId, { session, orders: [order] });
+    }
   });
 
-  // Sort tables: most recent order first
-  const sortedTableIds = Array.from(ordersByTable.keys()).sort((a, b) => {
-    const aOrders = ordersByTable.get(a) || [];
-    const bOrders = ordersByTable.get(b) || [];
+  // Sort sessions: most recent order first
+  const sortedSessionIds = Array.from(ordersBySession.keys()).sort((a, b) => {
+    const aOrders = ordersBySession.get(a)?.orders || [];
+    const bOrders = ordersBySession.get(b)?.orders || [];
     const aLatest = Math.max(...aOrders.map((o) => new Date(o.createdAt).getTime()));
     const bLatest = Math.max(...bOrders.map((o) => new Date(o.createdAt).getTime()));
     return bLatest - aLatest;
@@ -122,13 +127,13 @@ export default function OrdersTab() {
     setReceiptOpen(true);
   };
 
-  const toggleTable = (tableId: string) => {
-    setExpandedTables((prev) => {
+  const toggleSession = (sessionId: string) => {
+    setExpandedSessions((prev) => {
       const next = new Set(prev);
-      if (next.has(tableId)) {
-        next.delete(tableId);
+      if (next.has(sessionId)) {
+        next.delete(sessionId);
       } else {
-        next.add(tableId);
+        next.add(sessionId);
       }
       return next;
     });
@@ -137,14 +142,14 @@ export default function OrdersTab() {
   return (
     <div className="space-y-4">
       {/* Active / History toggle */}
-      <div className="flex border rounded-lg overflow-hidden">
+      <div className="flex border border-zinc-700 rounded-lg overflow-hidden">
         <Button
           variant="ghost"
           size="sm"
-          className={`flex-1 h-10 rounded-none ${
+          className={`flex-1 h-12 rounded-none text-base ${
             viewMode === 'active'
               ? 'bg-amber-600 text-white hover:bg-amber-700 hover:text-white'
-              : 'text-muted-foreground'
+              : 'text-zinc-400 hover:text-white'
           }`}
           onClick={() => { setViewMode('active'); setStatusFilter('all'); }}
         >
@@ -159,10 +164,10 @@ export default function OrdersTab() {
         <Button
           variant="ghost"
           size="sm"
-          className={`flex-1 h-10 rounded-none ${
+          className={`flex-1 h-12 rounded-none text-base ${
             viewMode === 'history'
-              ? 'bg-gray-600 text-white hover:bg-gray-700 hover:text-white'
-              : 'text-muted-foreground'
+              ? 'bg-zinc-600 text-white hover:bg-zinc-700 hover:text-white'
+              : 'text-zinc-400 hover:text-white'
           }`}
           onClick={() => { setViewMode('history'); setStatusFilter('all'); }}
         >
@@ -194,12 +199,12 @@ export default function OrdersTab() {
                 key={s}
                 variant={statusFilter === s ? 'default' : 'outline'}
                 size="sm"
-                className={`whitespace-nowrap min-h-[36px] ${
+                className={`whitespace-nowrap min-h-[40px] text-sm ${
                   statusFilter === s
                     ? viewMode === 'active'
                       ? 'bg-amber-600 hover:bg-amber-700 text-white'
-                      : 'bg-gray-600 hover:bg-gray-700 text-white'
-                    : 'border-amber-200'
+                      : 'bg-zinc-600 hover:bg-zinc-700 text-white'
+                    : 'border-zinc-700 text-zinc-400'
                 }`}
                 onClick={() => setStatusFilter(s)}
               >
@@ -218,103 +223,108 @@ export default function OrdersTab() {
         )}
       </div>
 
-      {/* Orders grouped by table */}
+      {/* Orders grouped by SESSION */}
       {filteredOrders.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground">
+        <div className="text-center py-12 text-zinc-500">
           <p>{viewMode === 'active' ? 'No active orders' : 'No order history'}</p>
         </div>
       ) : (
         <div className="space-y-4">
-          {sortedTableIds.map((tableId) => {
-            const table = tables.find((t) => t.id === tableId);
-            const tableOrders = ordersByTable.get(tableId) || [];
-            const isExpanded = expandedTables.has(tableId);
+          {sortedSessionIds.map((sessionId) => {
+            const sessionData = ordersBySession.get(sessionId);
+            if (!sessionData) return null;
+            const { session, orders: sessionOrders } = sessionData;
+            const table = tables.find((t) => t.id === session?.tableId);
+            const isExpanded = expandedSessions.has(sessionId);
 
-            // Calculate session total
-            const allTableDisplayOrders = displayOrders.filter((o) => o.tableId === tableId);
-            const sessionTotal = allTableDisplayOrders.reduce((sum, o) => sum + o.total, 0);
+            const sessionTotal = sessionOrders.reduce((sum, o) => sum + o.total, 0);
+            const hasPending = sessionOrders.some((o) => o.status === 'pending');
+            const isActive = session?.isActive;
+            const isInactive = session && !session.isActive && !session.closedAt;
 
-            // Find active session for this table
-            const activeSession = sessions.find(
-              (s) => s.tableId === tableId && s.isActive
-            );
-
-            const hasPending = tableOrders.some((o) => o.status === 'pending');
+            // Session timestamp for display
+            const sessionTime = session?.startedAt
+              ? format(new Date(session.startedAt), 'HH:mm')
+              : '';
 
             return (
-              <div key={tableId} className="space-y-0">
-                {/* Table group header */}
+              <div key={sessionId} className="space-y-0">
+                {/* Session group header */}
                 <div
-                  className={`flex items-center justify-between p-3 rounded-t-xl border-2 cursor-pointer select-none ${
+                  className={`flex items-center justify-between p-4 rounded-t-xl border-2 cursor-pointer select-none ${
                     hasPending
-                      ? 'bg-amber-50 border-amber-300'
+                      ? 'bg-amber-900/20 border-amber-600/50'
                       : viewMode === 'active'
-                      ? 'bg-white border-amber-100'
-                      : 'bg-gray-50 border-gray-200'
+                      ? 'bg-zinc-900 border-zinc-800'
+                      : 'bg-zinc-900 border-zinc-800'
                   }`}
-                  onClick={() => toggleTable(tableId)}
+                  onClick={() => toggleSession(sessionId)}
                 >
-                  <div className="flex items-center gap-2.5">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                      viewMode === 'active' ? 'bg-amber-600' : 'bg-gray-400'
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                      viewMode === 'active' ? 'bg-amber-600' : 'bg-zinc-700'
                     }`}>
-                      <UtensilsCrossed className="h-4 w-4 text-white" />
+                      <UtensilsCrossed className="h-5 w-5 text-white" />
                     </div>
                     <div>
-                      <h3 className="font-semibold text-amber-900 text-sm">
+                      <h3 className="font-semibold text-white text-base">
                         {table?.name || 'Unknown Table'}
                       </h3>
-                      <p className="text-[11px] text-muted-foreground">
-                        {tableOrders.length} order{tableOrders.length !== 1 ? 's' : ''} — Session total: <span className="font-semibold text-amber-700">&euro;{sessionTotal.toFixed(2)}</span>
+                      <p className="text-xs text-zinc-500">
+                        {sessionOrders.length} order{sessionOrders.length !== 1 ? 's' : ''} — Total: <span className="font-semibold text-amber-400">&euro;{sessionTotal.toFixed(2)}</span>
+                        {sessionTime && <span className="ml-2">Started {sessionTime}</span>}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     {hasPending && (
-                      <Badge className="bg-yellow-100 text-yellow-800 text-xs animate-pulse">
+                      <Badge className="bg-red-600 text-white text-xs animate-order-pulse">
                         New Order
                       </Badge>
                     )}
-                    {activeSession && viewMode === 'active' && (
-                      <Badge className="bg-orange-100 text-orange-800 text-xs">
+                    {isActive && (
+                      <Badge className="bg-emerald-900/50 text-emerald-400 text-xs border-emerald-700">
                         Active
                       </Badge>
                     )}
+                    {isInactive && (
+                      <Badge className="bg-zinc-800 text-zinc-400 text-xs border-zinc-600">
+                        Inactive
+                      </Badge>
+                    )}
                     {viewMode === 'history' && (
-                      <Badge className="bg-gray-100 text-gray-600 text-xs">
+                      <Badge className="bg-zinc-800 text-zinc-500 text-xs border-zinc-600">
                         Closed
                       </Badge>
                     )}
                     {isExpanded ? (
-                      <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                      <ChevronUp className="h-5 w-5 text-zinc-500" />
                     ) : (
-                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                      <ChevronDown className="h-5 w-5 text-zinc-500" />
                     )}
                   </div>
                 </div>
 
-                {/* Expanded: orders for this table */}
+                {/* Expanded: orders for this session */}
                 {isExpanded && (
-                  <div className="space-y-2 border-x-2 border-b-2 border-amber-100 rounded-b-xl p-3 bg-amber-50/30">
-                    {tableOrders.map((order) => {
+                  <div className="space-y-2 border-x-2 border-b-2 border-zinc-800 rounded-b-xl p-3 bg-zinc-900/50">
+                    {sessionOrders.map((order) => {
                       const currentStatusIdx = statusFlow.indexOf(order.status);
                       const isTerminal = order.status === 'delivered' || order.status === 'cancelled';
 
                       return (
                         <Card
                           key={order.id}
-                          className={`cursor-pointer hover:shadow-md transition-shadow border-amber-100 ${
-                            order.status === 'pending' ? 'ring-1 ring-yellow-300' : ''
+                          className={`cursor-pointer hover:border-amber-600/30 transition-colors bg-zinc-900 border-zinc-800 ${
+                            order.status === 'pending' ? 'ring-1 ring-amber-500/50' : ''
                           }`}
                           onClick={() => handleOpenDetail(order)}
                         >
                           <CardHeader className="pb-2 pt-3 px-4">
                             <div className="flex items-center justify-between flex-wrap gap-2">
-                              <div className="flex items-center gap-2">
-                                <CardTitle className="text-sm font-medium">
-                                  #{order.id.substring(0, 8)}
-                                </CardTitle>
-                              </div>
+                              <CardTitle className="text-sm font-medium text-white">
+                                #{order.id.substring(0, 8)}
+                              </CardTitle>
                               <div className="flex items-center gap-2">
                                 <Badge
                                   variant="outline"
@@ -322,7 +332,7 @@ export default function OrdersTab() {
                                 >
                                   {statusLabels[order.status]}
                                 </Badge>
-                                <span className="text-xs text-muted-foreground">
+                                <span className="text-xs text-zinc-500">
                                   {format(new Date(order.createdAt), 'HH:mm')}
                                 </span>
                               </div>
@@ -344,10 +354,10 @@ export default function OrdersTab() {
                                     key={item.id}
                                     className="flex items-center justify-between text-sm"
                                   >
-                                    <span className="flex items-center gap-1.5">
+                                    <span className="flex items-center gap-1.5 text-zinc-300">
                                       {item.quantity}&times; {item.productName}
                                       {item.notes && (
-                                        <span className="text-xs text-muted-foreground">
+                                        <span className="text-xs text-zinc-500">
                                           ({item.notes})
                                         </span>
                                       )}
@@ -361,7 +371,7 @@ export default function OrdersTab() {
                                       )}
                                     </span>
                                     <span className="flex items-center gap-1.5">
-                                      <span className="text-muted-foreground">
+                                      <span className="text-zinc-500">
                                         &euro;{(item.price * item.quantity).toFixed(2)}
                                       </span>
                                       {isSoldOut && (
@@ -384,7 +394,7 @@ export default function OrdersTab() {
                             </div>
 
                             <div className="flex items-center justify-between">
-                              <span className="font-semibold text-amber-700">
+                              <span className="font-semibold text-amber-400">
                                 &euro;{order.total.toFixed(2)}
                               </span>
                               {!isTerminal && (
@@ -392,7 +402,7 @@ export default function OrdersTab() {
                                   <Button
                                     variant="destructive"
                                     size="sm"
-                                    className="h-7 text-xs"
+                                    className="h-8 text-xs"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       updateOrderStatus(order.id, 'cancelled');
@@ -402,7 +412,7 @@ export default function OrdersTab() {
                                   </Button>
                                   {currentStatusIdx < statusFlow.length - 1 && (
                                     <Button
-                                      className="bg-amber-600 hover:bg-amber-700 text-white h-7 text-xs"
+                                      className="bg-amber-600 hover:bg-amber-700 text-white h-8 text-xs"
                                       size="sm"
                                       onClick={(e) => {
                                         e.stopPropagation();
@@ -426,14 +436,8 @@ export default function OrdersTab() {
                     {/* Receipt button */}
                     <Button
                       variant="outline"
-                      className="w-full border-amber-300 text-amber-700 min-h-[40px]"
-                      onClick={() => {
-                        // Use the first order's sessionId for receipt
-                        const firstOrder = tableOrders[0];
-                        if (firstOrder) {
-                          handleOpenReceipt(tableId, firstOrder.sessionId);
-                        }
-                      }}
+                      className="w-full border-zinc-700 text-amber-400 hover:bg-zinc-800 h-11 text-sm"
+                      onClick={() => handleOpenReceipt(table?.id || '', sessionId)}
                     >
                       <Receipt className="h-4 w-4 mr-2" />
                       View Receipt
@@ -455,10 +459,10 @@ export default function OrdersTab() {
 
       {/* Receipt Modal */}
       <Dialog open={receiptOpen} onOpenChange={setReceiptOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto bg-zinc-900 border-zinc-800">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Receipt className="h-5 w-5 text-amber-600" />
+            <DialogTitle className="flex items-center gap-2 text-white">
+              <Receipt className="h-5 w-5 text-amber-500" />
               Digital Receipt
             </DialogTitle>
           </DialogHeader>

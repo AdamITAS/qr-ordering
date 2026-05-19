@@ -7,36 +7,43 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import QRModal from './QRModal';
+import ReceiptView from '@/components/shared/ReceiptView';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   QrCode,
-  Copy,
-  RotateCcw,
-  Ban,
   Plus,
   XCircle,
-  ChevronDown,
-  ChevronUp,
+  CheckCircle,
+  Receipt,
+  Clock,
+  Users,
+  Moon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Table } from '@/lib/types';
 
 export default function TablesTab() {
   const tables = useRestaurantStore((s) => s.tables);
-  const tokens = useRestaurantStore((s) => s.tokens);
   const sessions = useRestaurantStore((s) => s.sessions);
+  const orders = useRestaurantStore((s) => s.orders);
   const addTable = useRestaurantStore((s) => s.addTable);
-  const generateToken = useRestaurantStore((s) => s.generateToken);
-  const invalidateToken = useRestaurantStore((s) => s.invalidateToken);
-  const restoreToken = useRestaurantStore((s) => s.restoreToken);
   const freeTable = useRestaurantStore((s) => s.freeTable);
-  const getActiveSession = useRestaurantStore((s) => s.getActiveSession);
+  const payAndFreeTable = useRestaurantStore((s) => s.payAndFreeTable);
+  const getSessionStatus = useRestaurantStore((s) => s.getSessionStatus);
 
   const [newTableName, setNewTableName] = useState('');
   const [newTableNumber, setNewTableNumber] = useState('');
   const [qrModalOpen, setQrModalOpen] = useState(false);
-  const [qrToken, setQrToken] = useState('');
+  const [qrTableNumber, setQrTableNumber] = useState(0);
   const [qrTableName, setQrTableName] = useState('');
-  const [expandedTable, setExpandedTable] = useState<string | null>(null);
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [receiptTableId, setReceiptTableId] = useState('');
+  const [receiptSessionId, setReceiptSessionId] = useState('');
 
   const handleAddTable = async () => {
     if (!newTableName.trim() || !newTableNumber.trim()) return;
@@ -46,68 +53,56 @@ export default function TablesTab() {
     toast.success('Table added!');
   };
 
-  const handleGenerateQR = async (table: Table) => {
-    const currentToken = table.currentTokenId
-      ? tokens.find((t) => t.id === table.currentTokenId)
-      : null;
-
-    if (currentToken && currentToken.isValid) {
-      setQrToken(currentToken.token);
-      setQrTableName(table.name);
-      setQrModalOpen(true);
-    } else {
-      // Generate a new token first
-      const tokenStr = await generateToken(table.id);
-      setQrToken(tokenStr);
-      setQrTableName(table.name);
-      setQrModalOpen(true);
-    }
-  };
-
-  const handleCopyLink = (tokenStr: string) => {
-    const url = `${window.location.origin}/#/menu/${tokenStr}`;
-    navigator.clipboard.writeText(url).then(() => {
-      toast.success('Link copied!');
-    });
+  const handleShowQR = (table: Table) => {
+    setQrTableNumber(table.number);
+    setQrTableName(table.name);
+    setQrModalOpen(true);
   };
 
   const getTableStatus = (table: Table) => {
-    const session = getActiveSession(table.id);
-    const currentToken = table.currentTokenId
-      ? tokens.find((t) => t.id === table.currentTokenId)
-      : null;
+    const activeSession = sessions.find(s => s.tableId === table.id && s.isActive);
+    const inactiveSession = sessions.find(s => s.tableId === table.id && !s.isActive && !s.closedAt);
 
-    if (session) {
-      // Session exists but check if token is still valid
-      if (currentToken && !currentToken.isValid) {
-        return 'session_invalid_token';
-      }
-      return 'occupied';
-    }
-    if (table.currentTokenId) {
-      if (currentToken && !currentToken.isValid) return 'closed';
-    }
+    if (activeSession) return 'occupied';
+    if (inactiveSession) return 'inactive';
     return 'free';
   };
 
-  const statusBadgeMap: Record<string, { label: string; className: string }> = {
-    free: { label: 'Free', className: 'bg-green-100 text-green-800 border-green-300' },
-    occupied: { label: 'Occupied', className: 'bg-orange-100 text-orange-800 border-orange-300' },
-    session_invalid_token: { label: 'Token Invalid', className: 'bg-red-100 text-red-700 border-red-300' },
-    closed: { label: 'Closed', className: 'bg-red-100 text-red-800 border-red-300' },
+  const getTableSessionInfo = (table: Table) => {
+    const activeSession = sessions.find(s => s.tableId === table.id && s.isActive);
+    const inactiveSession = sessions.find(s => s.tableId === table.id && !s.isActive && !s.closedAt);
+    const session = activeSession || inactiveSession;
+    if (!session) return null;
+
+    const sessionOrders = orders.filter(o => o.sessionId === session.id);
+    const total = sessionOrders.reduce((sum, o) => sum + o.total, 0);
+    const pendingCount = sessionOrders.filter(o => o.status === 'pending').length;
+
+    return { session, orders: sessionOrders, total, pendingCount, isActive: !!activeSession };
   };
 
-  const getTableTokens = (tableId: string) => {
-    const tableTokens = tokens.filter((t) => t.tableId === tableId);
-    // Deduplicate by token string (keep the most recent entry)
-    const seen = new Map<string, typeof tableTokens[0]>();
-    for (const t of tableTokens) {
-      const existing = seen.get(t.token);
-      if (!existing || t.createdAt > existing.createdAt) {
-        seen.set(t.token, t);
-      }
-    }
-    return Array.from(seen.values());
+  const statusConfig: Record<string, { label: string; icon: any; className: string; cardBorder: string; headerBg: string }> = {
+    free: {
+      label: 'Free',
+      icon: CheckCircle,
+      className: 'bg-emerald-900/50 text-emerald-400 border-emerald-700',
+      cardBorder: 'border-zinc-800',
+      headerBg: 'bg-zinc-900',
+    },
+    occupied: {
+      label: 'Occupied',
+      icon: Users,
+      className: 'bg-amber-900/50 text-amber-400 border-amber-700',
+      cardBorder: 'border-amber-700/50',
+      headerBg: 'bg-amber-900/20',
+    },
+    inactive: {
+      label: 'Inactive',
+      icon: Moon,
+      className: 'bg-zinc-800 text-zinc-400 border-zinc-600',
+      cardBorder: 'border-zinc-700',
+      headerBg: 'bg-zinc-900',
+    },
   };
 
   return (
@@ -119,22 +114,24 @@ export default function TablesTab() {
             placeholder="Table name"
             value={newTableName}
             onChange={(e) => setNewTableName(e.target.value)}
+            className="bg-zinc-900 border-zinc-700 text-white h-11"
           />
         </div>
-        <div className="w-24">
+        <div className="w-28">
           <Input
             placeholder="Number"
             type="number"
             value={newTableNumber}
             onChange={(e) => setNewTableNumber(e.target.value)}
+            className="bg-zinc-900 border-zinc-700 text-white h-11"
           />
         </div>
         <Button
-          className="bg-amber-600 hover:bg-amber-700 text-white min-h-[40px]"
+          className="bg-amber-600 hover:bg-amber-700 text-white h-11 text-base px-6"
           onClick={handleAddTable}
           disabled={!newTableName.trim() || !newTableNumber.trim()}
         >
-          <Plus className="h-4 w-4 mr-1" />
+          <Plus className="h-5 w-5 mr-2" />
           Add Table
         </Button>
       </div>
@@ -143,169 +140,111 @@ export default function TablesTab() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {tables.map((table) => {
           const status = getTableStatus(table);
-          const badge = statusBadgeMap[status];
-          const currentToken = table.currentTokenId
-            ? tokens.find((t) => t.id === table.currentTokenId)
-            : null;
-          const tableTokens = getTableTokens(table.id);
-          const isExpanded = expandedTable === table.id;
+          const config = statusConfig[status];
+          const StatusIcon = config.icon;
+          const sessionInfo = getTableSessionInfo(table);
 
           return (
-            <Card key={table.id} className="border-amber-100">
-              <CardHeader className="pb-2 pt-4 px-4">
+            <Card key={table.id} className={`bg-zinc-900 border-2 ${config.cardBorder} overflow-hidden`}>
+              {/* Card header with colored background */}
+              <div className={`${config.headerBg} px-4 pt-4 pb-3 border-b border-zinc-800`}>
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">{table.name}</CardTitle>
-                  <Badge variant="outline" className={badge.className}>
-                    {badge.label}
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center">
+                      <span className="text-xl font-bold text-white">{table.number}</span>
+                    </div>
+                    <div>
+                      <CardTitle className="text-white text-lg">{table.name}</CardTitle>
+                      <p className="text-xs text-zinc-500">Table #{table.number}</p>
+                    </div>
+                  </div>
+                  <Badge variant="outline" className={`${config.className} text-xs font-semibold`}>
+                    <StatusIcon className="h-3 w-3 mr-1" />
+                    {config.label}
                   </Badge>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Table #{table.number}
-                </p>
-              </CardHeader>
-              <CardContent className="px-4 pb-4 space-y-3">
-                {/* Current token info */}
-                {currentToken && (
-                  <div className="bg-muted/50 rounded-lg p-2.5 text-sm space-y-2">
+              </div>
+
+              <CardContent className="px-4 py-3 space-y-3">
+                {/* Session info */}
+                {sessionInfo && (
+                  <div className="bg-zinc-800/50 rounded-lg p-3 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">
-                        Current Token:
+                      <span className="text-xs text-zinc-400">
+                        {sessionInfo.isActive ? 'Active session' : 'Session (customer left)'}
                       </span>
-                      {!currentToken.isValid ? (
-                        <Badge variant="destructive" className="text-xs">
-                          Invalidated
-                        </Badge>
-                      ) : (
-                        <Badge className="bg-green-100 text-green-800 text-xs">
-                          Active
-                        </Badge>
-                      )}
+                      <span className="text-xs text-zinc-500">
+                        {sessionInfo.orders.length} order{sessionInfo.orders.length !== 1 ? 's' : ''}
+                      </span>
                     </div>
-                    <code className="text-xs font-mono break-all block">
-                      {currentToken.token}
-                    </code>
-                    <div className="flex gap-1.5 flex-wrap">
-                      {currentToken.isValid ? (
-                        <>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 text-xs border-amber-300"
-                            onClick={() => handleCopyLink(currentToken.token)}
-                          >
-                            <Copy className="h-3 w-3 mr-1" />
-                            Copy Link
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 text-xs border-red-300 text-red-600"
-                            onClick={() => invalidateToken(currentToken.id)}
-                          >
-                            <Ban className="h-3 w-3 mr-1" />
-                            Invalidate
-                          </Button>
-                        </>
-                      ) : (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                            className="h-7 text-xs border-green-300 text-green-600"
-                          onClick={() => restoreToken(currentToken.id)}
-                        >
-                          <RotateCcw className="h-3 w-3 mr-1" />
-                          Restore Token
-                        </Button>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-semibold text-white">
+                        Total: €{sessionInfo.total.toFixed(2)}
+                      </span>
+                      {sessionInfo.pendingCount > 0 && (
+                        <Badge className="bg-red-600 text-white text-xs animate-order-pulse">
+                          {sessionInfo.pendingCount} pending
+                        </Badge>
                       )}
                     </div>
                   </div>
                 )}
 
                 {/* Action buttons */}
-                <div className="flex gap-1.5 flex-wrap">
+                <div className="flex gap-2 flex-wrap">
                   <Button
-                    className="bg-amber-600 hover:bg-amber-700 text-white h-9 text-xs"
-                    size="sm"
-                    onClick={() => handleGenerateQR(table)}
+                    className="bg-amber-600 hover:bg-amber-700 text-white h-11 text-sm flex-1"
+                    onClick={() => handleShowQR(table)}
                   >
-                    <QrCode className="h-3.5 w-3.5 mr-1" />
-                    Generate QR
+                    <QrCode className="h-4 w-4 mr-2" />
+                    QR Code
                   </Button>
 
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-9 text-xs border-amber-300"
-                    onClick={async () => {
-                      // If current token is valid, invalidate it first
-                      if (currentToken?.isValid) {
-                        await invalidateToken(currentToken.id);
-                      }
-                      await generateToken(table.id);
-                    }}
-                  >
-                    <Plus className="h-3.5 w-3.5 mr-1" />
-                    New Token
-                  </Button>
+                  {status === 'occupied' && (
+                    <>
+                      <Button
+                        variant="outline"
+                        className="border-emerald-700 text-emerald-400 hover:bg-emerald-900/30 h-11 text-sm flex-1"
+                        onClick={() => {
+                          if (sessionInfo) {
+                            setReceiptTableId(table.id);
+                            setReceiptSessionId(sessionInfo.session.id);
+                            setReceiptOpen(true);
+                          }
+                        }}
+                      >
+                        <Receipt className="h-4 w-4 mr-2" />
+                        Receipt
+                      </Button>
+                      <Button
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white h-11 text-sm flex-1 font-semibold"
+                        onClick={() => payAndFreeTable(table.id)}
+                      >
+                        <CheckCircle className="h-4 w-4 mr-2" />
+                        Paid
+                      </Button>
+                    </>
+                  )}
 
-                  {status !== 'free' && (
+                  {(status === 'occupied' || status === 'inactive') && (
                     <Button
-                      variant="destructive"
-                      size="sm"
-                      className="h-9 text-xs"
+                      variant="outline"
+                      className="border-red-800 text-red-400 hover:bg-red-900/30 h-11 text-sm"
                       onClick={() => freeTable(table.id)}
                     >
-                      <XCircle className="h-3.5 w-3.5 mr-1" />
-                      Free Table
+                      <XCircle className="h-4 w-4 mr-2" />
+                      Free
                     </Button>
                   )}
                 </div>
 
-                {/* Token history */}
-                {tableTokens.length > 1 && (
-                  <div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-xs w-full justify-between"
-                      onClick={() =>
-                        setExpandedTable(isExpanded ? null : table.id)
-                      }
-                    >
-                      Token History ({tableTokens.length})
-                      {isExpanded ? (
-                        <ChevronUp className="h-3 w-3" />
-                      ) : (
-                        <ChevronDown className="h-3 w-3" />
-                      )}
-                    </Button>
-                    {isExpanded && (
-                      <div className="mt-1 space-y-1 max-h-40 overflow-y-auto">
-                        {tableTokens
-                          .slice()
-                          .reverse()
-                          .map((t) => (
-                            <div
-                              key={t.id}
-                              className="text-xs bg-muted/30 rounded px-2 py-1 flex items-center justify-between"
-                            >
-                              <code className="font-mono text-[10px]">
-                                {t.token}
-                              </code>
-                              <Badge
-                                variant="outline"
-                                className={`text-[10px] h-4 ${
-                                  t.isValid
-                                    ? 'bg-green-50 text-green-700'
-                                    : 'bg-red-50 text-red-700'
-                                }`}
-                              >
-                                {t.isValid ? 'Active' : 'Invalid'}
-                              </Badge>
-                            </div>
-                          ))}
-                      </div>
-                    )}
+                {/* Inactive notice */}
+                {status === 'inactive' && (
+                  <div className="flex items-center gap-2 bg-zinc-800/50 rounded-lg p-2">
+                    <Clock className="h-4 w-4 text-zinc-500" />
+                    <span className="text-xs text-zinc-400">
+                      Customer left page — session preserved
+                    </span>
                   </div>
                 )}
               </CardContent>
@@ -318,9 +257,26 @@ export default function TablesTab() {
       <QRModal
         open={qrModalOpen}
         onOpenChange={setQrModalOpen}
-        tokenStr={qrToken}
+        tableNumber={qrTableNumber}
         tableName={qrTableName}
       />
+
+      {/* Receipt Modal */}
+      <Dialog open={receiptOpen} onOpenChange={setReceiptOpen}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto bg-zinc-900 border-zinc-800">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-white">
+              <Receipt className="h-5 w-5 text-amber-500" />
+              Receipt
+            </DialogTitle>
+          </DialogHeader>
+          <ReceiptView
+            tableId={receiptTableId}
+            sessionId={receiptSessionId}
+            showDownload={true}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

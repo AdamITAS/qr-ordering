@@ -39,7 +39,7 @@ const categoryEmojis: Record<string, string> = {
 
 const spiceEmojis = ['', '🌶️', '🌶️🌶️', '🌶️🌶️🌶️'];
 const spiceLabels = ['', 'Mild', 'Medium', 'Hot'];
-const spiceColors = ['', 'bg-yellow-100 text-yellow-800', 'bg-orange-100 text-orange-800', 'bg-red-100 text-red-800'];
+const spiceColors = ['', 'bg-yellow-900/50 text-yellow-400', 'bg-orange-900/50 text-orange-400', 'bg-red-900/50 text-red-400'];
 
 export default function ProductsTab() {
   const products = useRestaurantStore((s) => s.products);
@@ -81,18 +81,18 @@ export default function ProductsTab() {
       {/* Controls */}
       <div className="flex gap-2 items-center flex-wrap">
         <div className="flex-1 min-w-[200px] relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
           <Input
             placeholder="Search products..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
+            className="pl-9 bg-zinc-900 border-zinc-700 text-white h-11"
           />
         </div>
         <select
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value)}
-          className="h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+          className="h-11 rounded-md border border-zinc-700 bg-zinc-900 text-zinc-300 px-3 py-1 text-sm"
         >
           {categories.map((cat) => (
             <option key={cat} value={cat}>
@@ -103,7 +103,7 @@ export default function ProductsTab() {
         <Button
           variant="outline"
           size="sm"
-          className="h-9"
+          className="h-11 border-zinc-700 text-zinc-400"
           onClick={() => setShowArchived(!showArchived)}
         >
           {showArchived ? (
@@ -114,7 +114,7 @@ export default function ProductsTab() {
           {showArchived ? 'Hide Archived' : 'Show Archived'}
         </Button>
         <Button
-          className="bg-amber-600 hover:bg-amber-700 text-white min-h-[40px]"
+          className="bg-amber-600 hover:bg-amber-700 text-white h-11 text-base px-6"
           onClick={handleAdd}
         >
           <Plus className="h-4 w-4 mr-1" />
@@ -130,13 +130,13 @@ export default function ProductsTab() {
           return (
             <Card
               key={product.id}
-              className={`overflow-hidden ${
+              className={`overflow-hidden bg-zinc-900 ${
                 product.isArchived
-                  ? 'opacity-50 border-gray-200'
-                  : 'border-amber-100'
+                  ? 'opacity-50 border-zinc-800'
+                  : 'border-zinc-800 hover:border-amber-600/30'
               }`}
             >
-              <div className="aspect-[3/1] bg-gradient-to-br from-amber-50 to-orange-50 flex items-center justify-center relative">
+              <div className="aspect-[3/1] bg-zinc-800 flex items-center justify-center relative overflow-hidden">
                 {product.imageUrl ? (
                   <img
                     src={product.imageUrl}
@@ -148,7 +148,7 @@ export default function ProductsTab() {
                 )}
                 <div className="absolute top-2 right-2 flex gap-1">
                   {product.isArchived && (
-                    <Badge variant="secondary" className="text-xs bg-gray-200">
+                    <Badge variant="secondary" className="text-xs bg-zinc-800 text-zinc-400">
                       Archived
                     </Badge>
                   )}
@@ -158,7 +158,7 @@ export default function ProductsTab() {
                     </Badge>
                   )}
                   {product.isAvailable && !product.isArchived && (
-                    <Badge className="text-xs bg-green-100 text-green-800">
+                    <Badge className="text-xs bg-emerald-900/50 text-emerald-400 border-emerald-700">
                       Available
                     </Badge>
                   )}
@@ -172,15 +172,15 @@ export default function ProductsTab() {
 
               <CardContent className="p-4 space-y-2">
                 <div>
-                  <h3 className="font-semibold text-sm">{product.name}</h3>
-                  <p className="text-xs text-muted-foreground line-clamp-2">
+                  <h3 className="font-semibold text-sm text-white">{product.name}</h3>
+                  <p className="text-xs text-zinc-500 line-clamp-2">
                     {product.description}
                   </p>
                   <div className="flex items-center justify-between mt-1">
-                    <span className="font-bold text-amber-700 text-sm">
+                    <span className="font-bold text-amber-400 text-sm">
                       €{product.price.toFixed(2)}
                     </span>
-                    <Badge variant="outline" className="text-xs">
+                    <Badge variant="outline" className="text-xs border-zinc-700 text-zinc-400">
                       {product.category}
                     </Badge>
                   </div>
@@ -190,7 +190,7 @@ export default function ProductsTab() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-8 text-xs"
+                    className="h-9 text-xs border-zinc-700 text-zinc-300 hover:bg-zinc-800"
                     onClick={() => handleEdit(product)}
                   >
                     <Pencil className="h-3 w-3 mr-1" />
@@ -198,11 +198,10 @@ export default function ProductsTab() {
                   </Button>
 
                   {product.isArchived ? (
-                    // UNARCHIVE button — was missing!
                     <Button
                       variant="outline"
                       size="sm"
-                      className="h-8 text-xs border-green-300 text-green-600"
+                      className="h-9 text-xs border-emerald-700 text-emerald-400 hover:bg-emerald-900/30"
                       onClick={() => unarchiveProduct(product.id)}
                     >
                       <ArchiveRestore className="h-3 w-3 mr-1" />
@@ -214,7 +213,7 @@ export default function ProductsTab() {
                         <Button
                           variant="outline"
                           size="sm"
-                          className="h-8 text-xs border-red-300 text-red-600"
+                          className="h-9 text-xs border-red-800 text-red-400 hover:bg-red-900/30"
                           onClick={() => markProductSoldOut(product.id)}
                         >
                           <EyeOff className="h-3 w-3 mr-1" />
@@ -224,7 +223,7 @@ export default function ProductsTab() {
                         <Button
                           variant="outline"
                           size="sm"
-                          className="h-8 text-xs border-green-300 text-green-600"
+                          className="h-9 text-xs border-emerald-700 text-emerald-400 hover:bg-emerald-900/30"
                           onClick={() => markProductAvailable(product.id)}
                         >
                           <Eye className="h-3 w-3 mr-1" />
@@ -237,22 +236,23 @@ export default function ProductsTab() {
                           <Button
                             variant="outline"
                             size="sm"
-                            className="h-8 text-xs border-gray-300 text-gray-500"
+                            className="h-9 text-xs border-zinc-700 text-zinc-500 hover:bg-zinc-800"
                           >
                             <Archive className="h-3 w-3 mr-1" />
                             Archive
                           </Button>
                         </AlertDialogTrigger>
-                        <AlertDialogContent>
+                        <AlertDialogContent className="bg-zinc-900 border-zinc-800">
                           <AlertDialogHeader>
-                            <AlertDialogTitle>Archive Product?</AlertDialogTitle>
-                            <AlertDialogDescription>
+                            <AlertDialogTitle className="text-white">Archive Product?</AlertDialogTitle>
+                            <AlertDialogDescription className="text-zinc-400">
                               This will hide &quot;{product.name}&quot; from the menu. You can restore it anytime using the &quot;Restore&quot; button.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogCancel className="bg-zinc-800 text-zinc-300 border-zinc-700">Cancel</AlertDialogCancel>
                             <AlertDialogAction
+                              className="bg-amber-600 hover:bg-amber-700 text-white"
                               onClick={() => archiveProduct(product.id)}
                             >
                               Archive
@@ -270,12 +270,11 @@ export default function ProductsTab() {
       </div>
 
       {filteredProducts.length === 0 && (
-        <div className="text-center py-12 text-muted-foreground">
+        <div className="text-center py-12 text-zinc-500">
           <p>No products found</p>
         </div>
       )}
 
-      {/* Product Form Modal */}
       <ProductFormModal
         open={formOpen}
         onOpenChange={setFormOpen}

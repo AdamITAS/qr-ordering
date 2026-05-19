@@ -109,7 +109,7 @@ interface RestaurantState {
   cart: CartItem[];
   initialized: boolean;
   loading: boolean;
-  lastOrderCount: number; // for sound notification tracking
+  lastOrderCount: number;
 
   // Table actions
   addTable: (name: string, number: number) => Promise<void>;
@@ -117,10 +117,16 @@ interface RestaurantState {
   invalidateToken: (tokenId: string) => Promise<void>;
   restoreToken: (tokenId: string) => Promise<void>;
   freeTable: (tableId: string) => Promise<void>;
+  payAndFreeTable: (tableId: string) => Promise<void>;
 
   // Session actions
   startSession: (tableId: string, tokenId: string) => Promise<string>;
   closeSession: (sessionId: string) => Promise<void>;
+  markSessionInactive: (sessionId: string) => Promise<void>;
+  reactivateSession: (sessionId: string) => Promise<void>;
+
+  // Auto-connect: when customer scans QR for a table number
+  autoConnectTable: (tableNumber: number) => Promise<{ tableId: string; sessionId: string; token: string } | null>;
 
   // Product actions
   addProduct: (product: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'isArchived'>) => Promise<void>;
@@ -149,10 +155,13 @@ interface RestaurantState {
   getTableByToken: (tokenStr: string) => Table | undefined;
   getTokenByString: (tokenStr: string) => Token | undefined;
   getActiveSession: (tableId: string) => TableSession | undefined;
+  getInactiveSession: (tableId: string) => TableSession | undefined;
+  getSessionStatus: (session: TableSession) => 'active' | 'inactive' | 'closed';
   getOrdersForSession: (sessionId: string) => Order[];
   getOrdersForTable: (tableId: string) => Order[];
   getAvailableProducts: () => Product[];
   isProductSoldOut: (productId: string) => boolean;
+  getTableByNumber: (number: number) => Table | undefined;
 
   // Data fetching
   fetchAllData: () => Promise<void>;
@@ -192,7 +201,6 @@ export const useRestaurantStore = create<RestaurantState>()(
           supabase.from('audit_log').select('*').order('timestamp', { ascending: false }),
         ]);
 
-        // Deduplicate tokens by token string (keep the most recent)
         const rawTokens = (tokensRes.data || []).map(rowToToken);
         const tokenMap = new Map<string, Token>();
         for (const t of rawTokens) {
@@ -214,7 +222,6 @@ export const useRestaurantStore = create<RestaurantState>()(
         const prevCount = get().lastOrderCount;
         const newCount = orders.filter((o: Order) => o.status === 'pending').length;
         if (prevCount > 0 && newCount > prevCount) {
-          // New order arrived — dispatch custom event for sound
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('new-order-sound'));
           }
@@ -239,7 +246,6 @@ export const useRestaurantStore = create<RestaurantState>()(
       }
     },
 
-    // Alias for backward compatibility
     syncFromStorage: async () => {
       await get().fetchAllData();
     },
@@ -278,7 +284,6 @@ export const useRestaurantStore = create<RestaurantState>()(
       });
       if (error) { console.error('generateToken error:', error); return ''; }
 
-      // Update table's currentTokenId
       await supabase.from('tables').update({ currentTokenId: id }).eq('id', tableId);
 
       set((state) => ({
@@ -324,7 +329,6 @@ export const useRestaurantStore = create<RestaurantState>()(
       }).eq('id', tokenId);
       if (error) { console.error('restoreToken error:', error); return; }
 
-      // Update table's currentTokenId
       await supabase.from('tables').update({ currentTokenId: tokenId }).eq('id', token.tableId);
 
       set((state) => ({
@@ -346,12 +350,12 @@ export const useRestaurantStore = create<RestaurantState>()(
       if (!table) return;
       const now = new Date().toISOString();
 
-      // Close active session directly in DB
+      // Close active session
       if (table.currentSessionId) {
         await supabase.from('sessions').update({ isActive: false, closedAt: now }).eq('id', table.currentSessionId);
       }
 
-      // Invalidate current token so customer can't reconnect
+      // Invalidate current token
       if (table.currentTokenId) {
         await supabase.from('tokens').update({ isValid: false, invalidatedAt: now }).eq('id', table.currentTokenId);
       }
@@ -363,7 +367,6 @@ export const useRestaurantStore = create<RestaurantState>()(
       }).eq('id', tableId);
       if (error) { console.error('freeTable error:', error); return; }
 
-      // Update local state atomically
       set((state) => ({
         tables: state.tables.map((t) =>
           t.id === tableId ? { ...t, currentTokenId: null, currentSessionId: null } : t
@@ -382,6 +385,47 @@ export const useRestaurantStore = create<RestaurantState>()(
       await get().addAuditLog('table_freed', `Table "${table.name}" freed`);
     },
 
+    // "Pagato" — marks as paid, closes session, frees table
+    payAndFreeTable: async (tableId: string) => {
+      const table = get().tables.find((t) => t.id === tableId);
+      if (!table) return;
+      const now = new Date().toISOString();
+
+      // Close active session
+      if (table.currentSessionId) {
+        await supabase.from('sessions').update({ isActive: false, closedAt: now }).eq('id', table.currentSessionId);
+      }
+
+      // Invalidate current token
+      if (table.currentTokenId) {
+        await supabase.from('tokens').update({ isValid: false, invalidatedAt: now }).eq('id', table.currentTokenId);
+      }
+
+      // Clear table references
+      const { error } = await supabase.from('tables').update({
+        currentTokenId: null,
+        currentSessionId: null,
+      }).eq('id', tableId);
+      if (error) { console.error('payAndFreeTable error:', error); return; }
+
+      set((state) => ({
+        tables: state.tables.map((t) =>
+          t.id === tableId ? { ...t, currentTokenId: null, currentSessionId: null } : t
+        ),
+        sessions: table.currentSessionId
+          ? state.sessions.map((s) =>
+              s.id === table.currentSessionId ? { ...s, isActive: false, closedAt: now } : s
+            )
+          : state.sessions,
+        tokens: table.currentTokenId
+          ? state.tokens.map((t) =>
+              t.id === table.currentTokenId ? { ...t, isValid: false, invalidatedAt: now } : t
+            )
+          : state.tokens,
+      }));
+      await get().addAuditLog('table_paid', `Table "${table.name}" paid and freed`);
+    },
+
     // =============================================
     // SESSION ACTIONS
     // =============================================
@@ -390,12 +434,10 @@ export const useRestaurantStore = create<RestaurantState>()(
       const now = new Date().toISOString();
       const table = get().tables.find((t) => t.id === tableId);
 
-      // GUARD: Don't create session if table already has an active one
       const existingActive = get().sessions.find(
         (s) => s.tableId === tableId && s.isActive
       );
       if (existingActive) {
-        // Table already has an active session, just return it
         return existingActive.id;
       }
 
@@ -409,7 +451,6 @@ export const useRestaurantStore = create<RestaurantState>()(
       });
       if (error) { console.error('startSession error:', error); return ''; }
 
-      // Update table's currentSessionId
       await supabase.from('tables').update({ currentSessionId: id }).eq('id', tableId);
 
       set((state) => ({
@@ -434,7 +475,6 @@ export const useRestaurantStore = create<RestaurantState>()(
       }).eq('id', sessionId);
       if (error) { console.error('closeSession error:', error); return; }
 
-      // Clear table's currentSessionId if it matches
       if (table?.currentSessionId === sessionId) {
         await supabase.from('tables').update({ currentSessionId: null }).eq('id', session.tableId);
       }
@@ -450,6 +490,124 @@ export const useRestaurantStore = create<RestaurantState>()(
         ),
       }));
       await get().addAuditLog('table_session_closed', `Session closed for ${table?.name || 'Unknown table'}`);
+    },
+
+    // Mark session as inactive (customer left page but didn't close)
+    markSessionInactive: async (sessionId: string) => {
+      const session = get().sessions.find((s) => s.id === sessionId);
+      if (!session || !session.isActive) return;
+
+      const table = get().tables.find((t) => t.id === session.tableId);
+
+      // Set isActive = false but DON'T set closedAt (this distinguishes inactive from closed)
+      const { error } = await supabase.from('sessions').update({
+        isActive: false,
+      }).eq('id', sessionId);
+      if (error) { console.error('markSessionInactive error:', error); return; }
+
+      // Clear table's currentSessionId
+      if (table?.currentSessionId === sessionId) {
+        await supabase.from('tables').update({ currentSessionId: null }).eq('id', session.tableId);
+      }
+
+      set((state) => ({
+        sessions: state.sessions.map((s) =>
+          s.id === sessionId ? { ...s, isActive: false } : s
+        ),
+        tables: state.tables.map((t) =>
+          t.id === session.tableId && t.currentSessionId === sessionId
+            ? { ...t, currentSessionId: null }
+            : t
+        ),
+      }));
+      await get().addAuditLog('table_session_inactive', `Session for ${table?.name || 'Unknown table'} marked inactive (customer left)`);
+    },
+
+    // Reactivate an inactive session (customer returned)
+    reactivateSession: async (sessionId: string) => {
+      const session = get().sessions.find((s) => s.id === sessionId);
+      if (!session || session.isActive || session.closedAt) return;
+
+      const table = get().tables.find((t) => t.id === session.tableId);
+
+      const { error } = await supabase.from('sessions').update({
+        isActive: true,
+      }).eq('id', sessionId);
+      if (error) { console.error('reactivateSession error:', error); return; }
+
+      // Re-set table's currentSessionId
+      await supabase.from('tables').update({ currentSessionId: sessionId }).eq('id', session.tableId);
+
+      set((state) => ({
+        sessions: state.sessions.map((s) =>
+          s.id === sessionId ? { ...s, isActive: true } : s
+        ),
+        tables: state.tables.map((t) =>
+          t.id === session.tableId
+            ? { ...t, currentSessionId: sessionId }
+            : t
+        ),
+      }));
+      await get().addAuditLog('table_session_reactivated', `Session for ${table?.name || 'Unknown table'} reactivated (customer returned)`);
+    },
+
+    // =============================================
+    // AUTO-CONNECT: Customer scans QR for a table number
+    // =============================================
+    autoConnectTable: async (tableNumber: number) => {
+      const table = get().tables.find((t) => t.number === tableNumber);
+      if (!table) return null;
+
+      // Check if table has an active session
+      const activeSession = get().sessions.find(
+        (s) => s.tableId === table.id && s.isActive
+      );
+      if (activeSession) {
+        // Reconnect to existing session
+        const token = get().tokens.find((t) => t.id === activeSession.tokenId);
+        if (token && token.isValid) {
+          return { tableId: table.id, sessionId: activeSession.id, token: token.token };
+        }
+        // Token invalid but session active — generate new token for same session
+        const newTokenStr = await get().generateToken(table.id);
+        // Update session's tokenId to new token
+        await supabase.from('sessions').update({ tokenId: get().tokens.find(t => t.token === newTokenStr)?.id || activeSession.tokenId }).eq('id', activeSession.id);
+        return { tableId: table.id, sessionId: activeSession.id, token: newTokenStr };
+      }
+
+      // Check for inactive session (customer left and came back)
+      const inactiveSession = get().sessions.find(
+        (s) => s.tableId === table.id && !s.isActive && !s.closedAt
+      );
+      if (inactiveSession) {
+        // Reactivate the session
+        await get().reactivateSession(inactiveSession.id);
+        const token = get().tokens.find((t) => t.id === inactiveSession.tokenId);
+        if (token) {
+          // Restore token if needed
+          if (!token.isValid) {
+            await get().restoreToken(token.id);
+          }
+          return { tableId: table.id, sessionId: inactiveSession.id, token: token.token };
+        }
+        // Generate new token if old one is gone
+        const newTokenStr = await get().generateToken(table.id);
+        const newToken = get().tokens.find(t => t.token === newTokenStr);
+        if (newToken) {
+          await supabase.from('sessions').update({ tokenId: newToken.id }).eq('id', inactiveSession.id);
+        }
+        return { tableId: table.id, sessionId: inactiveSession.id, token: newTokenStr };
+      }
+
+      // No active or inactive session — create new one
+      const tokenStr = await get().generateToken(table.id);
+      const newToken = get().tokens.find(t => t.token === tokenStr);
+      if (!newToken) return null;
+
+      const sessionId = await get().startSession(table.id, newToken.id);
+      if (!sessionId) return null;
+
+      return { tableId: table.id, sessionId, token: tokenStr };
     },
 
     // =============================================
@@ -576,7 +734,6 @@ export const useRestaurantStore = create<RestaurantState>()(
       const now = new Date().toISOString();
       const orderId = uuid();
 
-      // Insert order
       const { error: orderError } = await supabase.from('orders').insert({
         id: orderId,
         sessionId,
@@ -588,7 +745,6 @@ export const useRestaurantStore = create<RestaurantState>()(
       });
       if (orderError) { console.error('createOrder error:', orderError); return null; }
 
-      // Insert order items
       const itemsData = orderItems.map((item) => ({
         id: item.id,
         orderId,
@@ -621,7 +777,6 @@ export const useRestaurantStore = create<RestaurantState>()(
       const table = get().tables.find((t) => t.id === tableId);
       await get().addAuditLog('order_created', `Order created for ${table?.name || 'Unknown table'} - \u20AC${total.toFixed(2)}`);
 
-      // Trigger sound for admin
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('new-order-sound'));
       }
@@ -649,11 +804,9 @@ export const useRestaurantStore = create<RestaurantState>()(
       const item = order.items.find((i) => i.id === itemId);
       if (!item) return;
 
-      // Only allow removal if product is currently sold out
       const product = get().products.find((p) => p.id === item.productId);
       if (!product || product.isAvailable) return;
 
-      // Delete from Supabase
       const { error } = await supabase.from('order_items').delete().eq('id', itemId);
       if (error) { console.error('removeOrderItem error:', error); return; }
 
@@ -661,7 +814,6 @@ export const useRestaurantStore = create<RestaurantState>()(
       const total = newItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
       const now = new Date().toISOString();
 
-      // Update order total
       await supabase.from('orders').update({ total, updatedAt: now }).eq('id', orderId);
 
       set((state) => ({
@@ -760,6 +912,18 @@ export const useRestaurantStore = create<RestaurantState>()(
       );
     },
 
+    getInactiveSession: (tableId) => {
+      return get().sessions.find(
+        (s) => s.tableId === tableId && !s.isActive && !s.closedAt
+      );
+    },
+
+    getSessionStatus: (session) => {
+      if (session.isActive) return 'active';
+      if (session.closedAt) return 'closed';
+      return 'inactive';
+    },
+
     getOrdersForSession: (sessionId) => {
       return get().orders.filter((o) => o.sessionId === sessionId);
     },
@@ -777,8 +941,12 @@ export const useRestaurantStore = create<RestaurantState>()(
       return !!product && !product.isAvailable && !product.isArchived;
     },
 
+    getTableByNumber: (number) => {
+      return get().tables.find((t) => t.number === number);
+    },
+
     // =============================================
-    // INIT — fetch from Supabase instead of seed
+    // INIT
     // =============================================
     initializeSeedData: async () => {
       if (get().initialized) return;
@@ -789,7 +957,7 @@ export const useRestaurantStore = create<RestaurantState>()(
   })
 );
 
-// Debounce Realtime refetches to prevent race conditions
+// Debounce Realtime refetches
 let realtimeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let fetchInProgress = false;
 
@@ -802,7 +970,7 @@ function scheduleRefetch() {
   }, 600);
 }
 
-// Realtime subscriptions for live updates
+// Realtime subscriptions
 if (typeof window !== 'undefined') {
   const tables = ['tables', 'tokens', 'sessions', 'products', 'orders', 'order_items', 'audit_log'];
   tables.forEach((table) => {

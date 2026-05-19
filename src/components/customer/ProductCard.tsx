@@ -18,6 +18,14 @@ const categoryEmojis: Record<string, string> = {
   Drinks: '☕',
 };
 
+const categoryColors: Record<string, string> = {
+  Antipasti: 'bg-green-900/50 text-green-400 border-green-700',
+  Pasta: 'bg-orange-900/50 text-orange-400 border-orange-700',
+  Pizza: 'bg-red-900/50 text-red-400 border-red-700',
+  Dolci: 'bg-pink-900/50 text-pink-400 border-pink-700',
+  Drinks: 'bg-blue-900/50 text-blue-400 border-blue-700',
+};
+
 interface ProductCardProps {
   product: Product;
 }
@@ -38,13 +46,13 @@ export default function ProductCard({ product }: ProductCardProps) {
 
   return (
     <Card
-      className={`overflow-hidden transition-all ${
+      className={`overflow-hidden transition-all bg-zinc-900 border-zinc-800 ${
         isSoldOut
-          ? 'opacity-60 bg-muted/50'
-          : 'hover:shadow-md border-amber-100'
+          ? 'opacity-50'
+          : 'hover:border-amber-600/30'
       }`}
     >
-      <div className="aspect-[4/3] bg-gradient-to-br from-amber-50 to-orange-50 flex items-center justify-center relative">
+      <div className="aspect-[4/3] bg-zinc-800 flex items-center justify-center relative">
         {product.imageUrl ? (
           <img
             src={product.imageUrl}
@@ -62,10 +70,17 @@ export default function ProductCard({ product }: ProductCardProps) {
             Sold Out
           </Badge>
         )}
+        {/* Category badge */}
+        <Badge
+          variant="outline"
+          className={`absolute top-2 left-2 text-[10px] ${categoryColors[product.category] || 'bg-zinc-800 text-zinc-400 border-zinc-600'}`}
+        >
+          {product.category}
+        </Badge>
       </div>
 
       <div className="p-3 flex flex-col gap-1.5">
-        <h3 className="font-semibold text-sm leading-tight text-foreground">
+        <h3 className="font-semibold text-sm leading-tight text-white">
           {product.name}
           {(product.spiceLevel ?? 0) > 0 && (
             <span className="ml-1 text-xs" title={spiceLabels[product.spiceLevel]}>
@@ -73,15 +88,15 @@ export default function ProductCard({ product }: ProductCardProps) {
             </span>
           )}
         </h3>
-        <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+        <p className="text-xs text-zinc-500 line-clamp-2 leading-relaxed">
           {product.description}
         </p>
         <div className="flex items-center justify-between mt-1">
-          <span className="font-bold text-amber-700 text-sm">
+          <span className="font-bold text-amber-400 text-sm">
             €{product.price.toFixed(2)}
           </span>
           {isSoldOut ? (
-            <Badge variant="secondary" className="text-xs">
+            <Badge variant="secondary" className="text-xs bg-zinc-800 text-zinc-500">
               Unavailable
             </Badge>
           ) : cartItem ? (
@@ -89,7 +104,7 @@ export default function ProductCard({ product }: ProductCardProps) {
               <Button
                 variant="outline"
                 size="icon"
-                className="h-7 w-7 rounded-full border-amber-300"
+                className="h-8 w-8 rounded-full border-zinc-600 text-zinc-300"
                 onClick={() => {
                   if (cartItem.quantity <= 1) {
                     removeFromCart(product.id);
@@ -100,12 +115,12 @@ export default function ProductCard({ product }: ProductCardProps) {
               >
                 <Minus className="h-3 w-3" />
               </Button>
-              <span className="w-6 text-center text-sm font-semibold">
+              <span className="w-6 text-center text-sm font-semibold text-white">
                 {cartItem.quantity}
               </span>
               <Button
                 size="icon"
-                className="h-7 w-7 rounded-full bg-amber-600 hover:bg-amber-700"
+                className="h-8 w-8 rounded-full bg-amber-600 hover:bg-amber-700"
                 onClick={() => addToCart(product.id)}
               >
                 <Plus className="h-3 w-3" />
@@ -114,7 +129,7 @@ export default function ProductCard({ product }: ProductCardProps) {
           ) : (
             <Button
               size="icon"
-              className="h-8 w-8 rounded-full bg-amber-600 hover:bg-amber-700"
+              className="h-9 w-9 rounded-full bg-amber-600 hover:bg-amber-700"
               onClick={() => addToCart(product.id)}
             >
               <Plus className="h-4 w-4" />

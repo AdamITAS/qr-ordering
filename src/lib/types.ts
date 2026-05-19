@@ -61,6 +61,8 @@ export interface Order {
 
 export type OrderStatus = 'pending' | 'confirmed' | 'preparing' | 'ready' | 'delivered' | 'cancelled';
 
+export type SessionStatus = 'active' | 'inactive' | 'closed';
+
 export interface AuditLogEntry {
   id: string;
   action: AuditAction;
@@ -74,6 +76,8 @@ export type AuditAction =
   | 'token_restored'
   | 'table_session_started'
   | 'table_session_closed'
+  | 'table_session_inactive'
+  | 'table_session_reactivated'
   | 'product_created'
   | 'product_updated'
   | 'product_archived'
@@ -82,10 +86,18 @@ export type AuditAction =
   | 'order_created'
   | 'order_status_changed'
   | 'order_item_removed_by_admin'
-  | 'table_freed';
+  | 'table_freed'
+  | 'table_paid';
 
 export interface CartItem {
   productId: string;
   quantity: number;
   notes: string;
+}
+
+// Utility: derive a 4-digit receipt number from an order ID
+export function getReceiptNumber(orderId: string): number {
+  const hex = orderId.replace(/-/g, '').substring(0, 8);
+  const num = parseInt(hex, 16);
+  return (num % 9000) + 1000; // 4-digit number between 1000-9999
 }

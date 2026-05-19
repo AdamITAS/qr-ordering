@@ -2,12 +2,14 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { UtensilsCrossed, Clock, Volume2, VolumeX } from 'lucide-react';
+import { UtensilsCrossed, Clock, Volume2, VolumeX, Maximize, Minimize, Bell } from 'lucide-react';
 import TablesTab from './TablesTab';
 import ProductsTab from './ProductsTab';
 import OrdersTab from './OrdersTab';
 import AuditLogTab from './AuditLogTab';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { useRestaurantStore } from '@/lib/store';
 
 // Generate a beep sound using Web Audio API
 function playBeep() {
@@ -21,7 +23,7 @@ function playBeep() {
     gain1.connect(audioCtx.destination);
     osc1.frequency.value = 880;
     osc1.type = 'sine';
-    gain1.gain.value = 0.3;
+    gain1.gain.value = 0.4;
     osc1.start(audioCtx.currentTime);
     osc1.stop(audioCtx.currentTime + 0.15);
 
@@ -32,9 +34,20 @@ function playBeep() {
     gain2.connect(audioCtx.destination);
     osc2.frequency.value = 1100;
     osc2.type = 'sine';
-    gain2.gain.value = 0.3;
+    gain2.gain.value = 0.4;
     osc2.start(audioCtx.currentTime + 0.2);
     osc2.stop(audioCtx.currentTime + 0.35);
+
+    // Third beep (confirmation)
+    const osc3 = audioCtx.createOscillator();
+    const gain3 = audioCtx.createGain();
+    osc3.connect(gain3);
+    gain3.connect(audioCtx.destination);
+    osc3.frequency.value = 1320;
+    osc3.type = 'sine';
+    gain3.gain.value = 0.3;
+    osc3.start(audioCtx.currentTime + 0.4);
+    osc3.stop(audioCtx.currentTime + 0.55);
   } catch {
     // Audio not supported
   }
@@ -44,7 +57,15 @@ export default function AdminDashboard() {
   const [currentTime, setCurrentTime] = useState('');
   const [activeTab, setActiveTab] = useState('tables');
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showNewOrderFlash, setShowNewOrderFlash] = useState(false);
   const lastSoundTime = useRef(0);
+
+  const orders = useRestaurantStore((s) => s.orders);
+  const sessions = useRestaurantStore((s) => s.sessions);
+  const pendingCount = orders.filter(o => o.status === 'pending').length;
+  const activeSessionIds = new Set(sessions.filter(s => s.isActive).map(s => s.id));
+  const activeOrdersCount = orders.filter(o => activeSessionIds.has(o.sessionId)).length;
 
   useEffect(() => {
     const updateTime = () => {
@@ -60,10 +81,18 @@ export default function AdminDashboard() {
     return () => clearInterval(interval);
   }, []);
 
+  // Flash notification when new order arrives
+  useEffect(() => {
+    if (pendingCount > 0) {
+      setShowNewOrderFlash(true);
+      const timer = setTimeout(() => setShowNewOrderFlash(false), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [pendingCount]);
+
   // Listen for new order sound events
   const handleNewOrderSound = useCallback(() => {
     if (!soundEnabled) return;
-    // Throttle: don't play sound more than once every 5 seconds
     const now = Date.now();
     if (now - lastSoundTime.current < 5000) return;
     lastSoundTime.current = now;
@@ -77,41 +106,84 @@ export default function AdminDashboard() {
     };
   }, [handleNewOrderSound]);
 
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
+    } else {
+      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {});
+    }
+  }, []);
+
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50/50 to-orange-50/50 flex flex-col">
+    <div className="min-h-screen bg-zinc-950 flex flex-col admin-touch">
+      {/* New order flash overlay */}
+      {showNewOrderFlash && (
+        <div className="fixed top-0 left-0 right-0 h-1 bg-amber-500 animate-order-pulse z-50" />
+      )}
+
       {/* Header */}
-      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-sm border-b border-amber-100 shadow-sm">
-        <div className="max-w-6xl mx-auto px-4 py-3">
+      <header className="sticky top-0 z-30 bg-zinc-900/95 backdrop-blur-sm border-b border-zinc-800">
+        <div className="max-w-7xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-lg bg-amber-600 flex items-center justify-center">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-amber-600 flex items-center justify-center">
                 <UtensilsCrossed className="h-5 w-5 text-white" />
               </div>
               <div>
-                <h1 className="font-bold text-amber-900 text-lg leading-tight">
+                <h1 className="font-bold text-white text-xl leading-tight">
                   Restaurant Admin
                 </h1>
-                <p className="text-[10px] text-amber-600">
+                <p className="text-xs text-zinc-500">
                   Trattoria del Sole
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-3">
+              {/* New order bell indicator */}
+              {pendingCount > 0 && (
+                <div className="flex items-center gap-1.5 bg-amber-600/20 border border-amber-600/40 rounded-lg px-3 py-1.5">
+                  <Bell className="h-4 w-4 text-amber-500 animate-order-pulse" />
+                  <span className="text-amber-400 text-sm font-semibold">{pendingCount} new</span>
+                </div>
+              )}
+
               {/* Sound toggle */}
               <Button
                 variant="ghost"
                 size="sm"
-                className={`h-8 w-8 p-0 ${soundEnabled ? 'text-amber-600' : 'text-muted-foreground'}`}
+                className={`h-10 w-10 p-0 ${soundEnabled ? 'text-amber-500' : 'text-zinc-600'}`}
                 onClick={() => setSoundEnabled(!soundEnabled)}
                 title={soundEnabled ? 'Sound on — click to mute' : 'Sound off — click to enable'}
               >
                 {soundEnabled ? (
-                  <Volume2 className="h-4 w-4" />
+                  <Volume2 className="h-5 w-5" />
                 ) : (
-                  <VolumeX className="h-4 w-4" />
+                  <VolumeX className="h-5 w-5" />
                 )}
               </Button>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+
+              {/* Fullscreen toggle */}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-10 w-10 p-0 text-zinc-400 hover:text-white"
+                onClick={toggleFullscreen}
+                title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+              >
+                {isFullscreen ? (
+                  <Minimize className="h-5 w-5" />
+                ) : (
+                  <Maximize className="h-5 w-5" />
+                )}
+              </Button>
+
+              <div className="flex items-center gap-2 text-sm text-zinc-500">
                 <Clock className="h-4 w-4" />
                 {currentTime}
               </div>
@@ -121,30 +193,35 @@ export default function AdminDashboard() {
       </header>
 
       {/* Main content */}
-      <main className="flex-1 max-w-6xl mx-auto w-full px-4 py-4 pb-8">
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 py-4 pb-8">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="w-full grid grid-cols-4 mb-4 bg-amber-50">
+          <TabsList className="w-full grid grid-cols-4 mb-4 bg-zinc-900 h-12">
             <TabsTrigger
               value="tables"
-              className="data-[state=active]:bg-amber-600 data-[state=active]:text-white min-h-[40px]"
+              className="data-[state=active]:bg-amber-600 data-[state=active]:text-white text-zinc-400 text-base font-medium min-h-[44px]"
             >
               Tables
             </TabsTrigger>
             <TabsTrigger
               value="products"
-              className="data-[state=active]:bg-amber-600 data-[state=active]:text-white min-h-[40px]"
+              className="data-[state=active]:bg-amber-600 data-[state=active]:text-white text-zinc-400 text-base font-medium min-h-[44px]"
             >
               Products
             </TabsTrigger>
             <TabsTrigger
               value="orders"
-              className="data-[state=active]:bg-amber-600 data-[state=active]:text-white min-h-[40px]"
+              className="data-[state=active]:bg-amber-600 data-[state=active]:text-white text-zinc-400 text-base font-medium min-h-[44px] relative"
             >
               Orders
+              {pendingCount > 0 && (
+                <Badge className="ml-2 h-6 min-w-[24px] text-xs bg-red-600 text-white border-0 animate-order-pulse">
+                  {pendingCount}
+                </Badge>
+              )}
             </TabsTrigger>
             <TabsTrigger
               value="audit"
-              className="data-[state=active]:bg-amber-600 data-[state=active]:text-white min-h-[40px]"
+              className="data-[state=active]:bg-amber-600 data-[state=active]:text-white text-zinc-400 text-base font-medium min-h-[44px]"
             >
               Audit Log
             </TabsTrigger>

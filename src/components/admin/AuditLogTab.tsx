@@ -10,20 +10,23 @@ import { List, LayoutList, UtensilsCrossed } from 'lucide-react';
 import type { AuditAction } from '@/lib/types';
 
 const actionColors: Record<string, string> = {
-  token_created: 'bg-blue-100 text-blue-800',
-  token_invalidated: 'bg-red-100 text-red-800',
-  token_restored: 'bg-green-100 text-green-800',
-  table_session_started: 'bg-blue-100 text-blue-800',
-  table_session_closed: 'bg-orange-100 text-orange-800',
-  product_created: 'bg-green-100 text-green-800',
-  product_updated: 'bg-yellow-100 text-yellow-800',
-  product_archived: 'bg-gray-100 text-gray-800',
-  product_marked_sold_out: 'bg-red-100 text-red-800',
-  product_marked_available: 'bg-green-100 text-green-800',
-  order_created: 'bg-emerald-100 text-emerald-800',
-  order_status_changed: 'bg-amber-100 text-amber-800',
-  order_item_removed_by_admin: 'bg-red-100 text-red-800',
-  table_freed: 'bg-gray-100 text-gray-600',
+  token_created: 'bg-blue-900/50 text-blue-400',
+  token_invalidated: 'bg-red-900/50 text-red-400',
+  token_restored: 'bg-emerald-900/50 text-emerald-400',
+  table_session_started: 'bg-blue-900/50 text-blue-400',
+  table_session_closed: 'bg-orange-900/50 text-orange-400',
+  table_session_inactive: 'bg-zinc-800 text-zinc-400',
+  table_session_reactivated: 'bg-emerald-900/50 text-emerald-400',
+  product_created: 'bg-emerald-900/50 text-emerald-400',
+  product_updated: 'bg-yellow-900/50 text-yellow-400',
+  product_archived: 'bg-zinc-800 text-zinc-500',
+  product_marked_sold_out: 'bg-red-900/50 text-red-400',
+  product_marked_available: 'bg-emerald-900/50 text-emerald-400',
+  order_created: 'bg-emerald-900/50 text-emerald-400',
+  order_status_changed: 'bg-amber-900/50 text-amber-400',
+  order_item_removed_by_admin: 'bg-red-900/50 text-red-400',
+  table_freed: 'bg-zinc-800 text-zinc-500',
+  table_paid: 'bg-emerald-900/50 text-emerald-400',
 };
 
 const actionLabels: Record<string, string> = {
@@ -32,6 +35,8 @@ const actionLabels: Record<string, string> = {
   token_restored: 'Token Restored',
   table_session_started: 'Session Started',
   table_session_closed: 'Session Closed',
+  table_session_inactive: 'Session Inactive',
+  table_session_reactivated: 'Session Reactivated',
   product_created: 'Product Created',
   product_updated: 'Product Updated',
   product_archived: 'Product Archived',
@@ -41,6 +46,7 @@ const actionLabels: Record<string, string> = {
   order_status_changed: 'Status Changed',
   order_item_removed_by_admin: 'Item Removed',
   table_freed: 'Table Freed',
+  table_paid: 'Table Paid',
 };
 
 function getActionCategory(action: AuditAction): string {
@@ -52,10 +58,7 @@ function getActionCategory(action: AuditAction): string {
   return 'Other';
 }
 
-// Extract table name from audit details string
 function extractTableName(details: string): string | null {
-  // Patterns like: 'Token generated for Table 1: ...', 'Session started for Table 3',
-  // 'Order created for Table 2 - ...', 'Table "Table 5" freed'
   const match = details.match(/(?:for |Table ")(Table \d+)/i);
   return match ? match[1] : null;
 }
@@ -71,7 +74,9 @@ export default function AuditLogTab() {
       (entry) =>
         categoryFilter === 'all' ||
         getActionCategory(entry.action) === categoryFilter
-    );
+    )
+    // FIX: Already sorted newest first from Supabase query, but ensure it here
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
   // Group by extracted table name
   const groupedByTable = new Map<string, typeof filtered>();
@@ -88,27 +93,28 @@ export default function AuditLogTab() {
     }
   });
 
-  // Sort table groups: those with active tables first
+  // Sort table groups: most recent activity first
   const sortedTableNames = Array.from(groupedByTable.keys()).sort((a, b) => {
-    const aNum = parseInt(a.replace(/\D/g, '')) || 0;
-    const bNum = parseInt(b.replace(/\D/g, '')) || 0;
-    return aNum - bNum;
+    const aEntries = groupedByTable.get(a) || [];
+    const bEntries = groupedByTable.get(b) || [];
+    const aLatest = aEntries.length > 0 ? new Date(aEntries[0].timestamp).getTime() : 0;
+    const bLatest = bEntries.length > 0 ? new Date(bEntries[0].timestamp).getTime() : 0;
+    return bLatest - aLatest; // Most recent first
   });
 
-  // Render a single audit entry
   const renderEntry = (entry: typeof filtered[0]) => (
-    <div key={entry.id} className="flex items-start gap-3 py-1.5">
+    <div key={entry.id} className="flex items-start gap-3 py-2">
       <Badge
         variant="outline"
         className={`text-[10px] whitespace-nowrap mt-0.5 ${
-          actionColors[entry.action] || 'bg-gray-100'
+          actionColors[entry.action] || 'bg-zinc-800 text-zinc-400'
         }`}
       >
         {actionLabels[entry.action] || entry.action}
       </Badge>
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-foreground">{entry.details}</p>
-        <p className="text-[11px] text-muted-foreground mt-0.5">
+        <p className="text-sm text-zinc-300">{entry.details}</p>
+        <p className="text-[11px] text-zinc-600 mt-0.5">
           {format(new Date(entry.timestamp), 'HH:mm:ss — dd/MM/yyyy')}
         </p>
       </div>
@@ -119,7 +125,6 @@ export default function AuditLogTab() {
     <div className="space-y-4">
       {/* Controls */}
       <div className="flex gap-2 items-center flex-wrap">
-        {/* Category filter */}
         <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1 flex-1">
           {['all', 'Tokens', 'Sessions', 'Products', 'Orders', 'Tables'].map(
             (cat) => (
@@ -127,10 +132,10 @@ export default function AuditLogTab() {
                 key={cat}
                 variant={categoryFilter === cat ? 'default' : 'outline'}
                 size="sm"
-                className={`whitespace-nowrap min-h-[36px] ${
+                className={`whitespace-nowrap min-h-[40px] text-sm ${
                   categoryFilter === cat
                     ? 'bg-amber-600 hover:bg-amber-700 text-white'
-                    : 'border-amber-200'
+                    : 'border-zinc-700 text-zinc-400'
                 }`}
                 onClick={() => setCategoryFilter(cat)}
               >
@@ -140,15 +145,14 @@ export default function AuditLogTab() {
           )}
         </div>
 
-        {/* View mode toggle */}
-        <div className="flex border rounded-lg overflow-hidden">
+        <div className="flex border border-zinc-700 rounded-lg overflow-hidden">
           <Button
             variant="ghost"
             size="sm"
-            className={`h-8 px-2.5 rounded-none ${
+            className={`h-9 px-2.5 rounded-none ${
               viewMode === 'grouped'
-                ? 'bg-amber-100 text-amber-800'
-                : 'text-muted-foreground'
+                ? 'bg-zinc-800 text-amber-400'
+                : 'text-zinc-500'
             }`}
             onClick={() => setViewMode('grouped')}
             title="Grouped by table"
@@ -158,10 +162,10 @@ export default function AuditLogTab() {
           <Button
             variant="ghost"
             size="sm"
-            className={`h-8 px-2.5 rounded-none ${
+            className={`h-9 px-2.5 rounded-none ${
               viewMode === 'flat'
-                ? 'bg-amber-100 text-amber-800'
-                : 'text-muted-foreground'
+                ? 'bg-zinc-800 text-amber-400'
+                : 'text-zinc-500'
             }`}
             onClick={() => setViewMode('flat')}
             title="Chronological list"
@@ -174,14 +178,13 @@ export default function AuditLogTab() {
       {/* Audit entries */}
       <div className="max-h-[70vh] overflow-y-auto pr-1">
         {filtered.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground">
+          <div className="text-center py-12 text-zinc-500">
             <p>No audit entries found</p>
           </div>
         ) : viewMode === 'flat' ? (
-          // Flat chronological view
           <div className="space-y-2">
             {filtered.map((entry) => (
-              <Card key={entry.id} className="border-amber-50">
+              <Card key={entry.id} className="bg-zinc-900 border-zinc-800">
                 <CardContent className="px-4 py-2.5">
                   {renderEntry(entry)}
                 </CardContent>
@@ -189,32 +192,29 @@ export default function AuditLogTab() {
             ))}
           </div>
         ) : (
-          // Grouped by table view
           <div className="space-y-3">
             {sortedTableNames.map((tableName) => {
               const entries = groupedByTable.get(tableName) || [];
               const table = tables.find((t) => t.name === tableName);
 
               return (
-                <Card key={tableName} className="border-amber-100 overflow-hidden">
-                  {/* Table group header */}
-                  <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-100">
+                <Card key={tableName} className="bg-zinc-900 border-zinc-800 overflow-hidden">
+                  <div className="flex items-center gap-2 px-4 py-2 bg-zinc-800 border-b border-zinc-700">
                     <div className="w-6 h-6 rounded bg-amber-600 flex items-center justify-center">
                       <UtensilsCrossed className="h-3 w-3 text-white" />
                     </div>
-                    <span className="font-semibold text-sm text-amber-900">
+                    <span className="font-semibold text-sm text-white">
                       {tableName}
                     </span>
                     {table?.currentSessionId && (
-                      <Badge className="bg-orange-100 text-orange-800 text-[10px]">
+                      <Badge className="bg-amber-900/50 text-amber-400 text-[10px] border-amber-700">
                         Active
                       </Badge>
                     )}
-                    <span className="text-xs text-muted-foreground ml-auto">
+                    <span className="text-xs text-zinc-500 ml-auto">
                       {entries.length} event{entries.length !== 1 ? 's' : ''}
                     </span>
                   </div>
-                  {/* Entries */}
                   <CardContent className="px-4 py-2 space-y-0.5">
                     {entries.map(renderEntry)}
                   </CardContent>
@@ -222,14 +222,13 @@ export default function AuditLogTab() {
               );
             })}
 
-            {/* Non-table events (product changes, etc.) */}
             {ungrouped.length > 0 && (
-              <Card className="border-gray-100 overflow-hidden">
-                <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100">
-                  <span className="font-semibold text-sm text-gray-700">
+              <Card className="bg-zinc-900 border-zinc-800 overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-2 bg-zinc-800 border-b border-zinc-700">
+                  <span className="font-semibold text-sm text-zinc-400">
                     General
                   </span>
-                  <span className="text-xs text-muted-foreground ml-auto">
+                  <span className="text-xs text-zinc-500 ml-auto">
                     {ungrouped.length} event{ungrouped.length !== 1 ? 's' : ''}
                   </span>
                 </div>

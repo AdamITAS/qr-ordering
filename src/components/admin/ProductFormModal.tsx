@@ -43,7 +43,6 @@ export default function ProductFormModal({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Reset form when product changes or modal opens
   const handleOpenChange = (newOpen: boolean) => {
     if (newOpen) {
       if (product) {
@@ -73,7 +72,35 @@ export default function ProductFormModal({
 
     const reader = new FileReader();
     reader.onload = (ev) => {
-      setImageUrl(ev.target?.result as string);
+      const img = new Image();
+      img.onload = () => {
+        // Crop to 3:1 aspect ratio (matching card display)
+        const canvas = document.createElement('canvas');
+        const targetWidth = 600;
+        const targetHeight = 200; // 3:1 ratio
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+
+        const ctx = canvas.getContext('2d')!;
+        // Center-crop the image
+        const sourceAspect = img.width / img.height;
+        const targetAspect = targetWidth / targetHeight;
+
+        let sx = 0, sy = 0, sw = img.width, sh = img.height;
+        if (sourceAspect > targetAspect) {
+          // Image is wider — crop sides
+          sw = img.height * targetAspect;
+          sx = (img.width - sw) / 2;
+        } else {
+          // Image is taller — crop top/bottom
+          sh = img.width / targetAspect;
+          sy = (img.height - sh) / 2;
+        }
+
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
+        setImageUrl(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.src = ev.target?.result as string;
     };
     reader.readAsDataURL(file);
   };
@@ -110,35 +137,37 @@ export default function ProductFormModal({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto bg-zinc-900 border-zinc-800">
         <DialogHeader>
-          <DialogTitle>{product ? 'Edit Product' : 'Add Product'}</DialogTitle>
+          <DialogTitle className="text-white">{product ? 'Edit Product' : 'Add Product'}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-2">
-            <Label htmlFor="product-name">Name *</Label>
+            <Label htmlFor="product-name" className="text-zinc-300">Name *</Label>
             <Input
               id="product-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Product name"
+              className="bg-zinc-800 border-zinc-700 text-white h-11"
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="product-description">Description</Label>
+            <Label htmlFor="product-description" className="text-zinc-300">Description</Label>
             <Textarea
               id="product-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Product description"
               rows={3}
+              className="bg-zinc-800 border-zinc-700 text-white"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="product-price">Price (€) *</Label>
+              <Label htmlFor="product-price" className="text-zinc-300">Price (€) *</Label>
               <Input
                 id="product-price"
                 type="number"
@@ -147,16 +176,17 @@ export default function ProductFormModal({
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
                 placeholder="0.00"
+                className="bg-zinc-800 border-zinc-700 text-white h-11"
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="product-category">Category</Label>
+              <Label htmlFor="product-category" className="text-zinc-300">Category</Label>
               <select
                 id="product-category"
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className="flex h-11 w-full rounded-md border border-zinc-700 bg-zinc-800 text-zinc-300 px-3 py-1 text-sm"
               >
                 {CATEGORIES.map((cat) => (
                   <option key={cat} value={cat}>
@@ -169,7 +199,7 @@ export default function ProductFormModal({
 
           {/* Spice Level */}
           <div className="space-y-2">
-            <Label>Spice Level</Label>
+            <Label className="text-zinc-300">Spice Level</Label>
             <div className="flex gap-2">
               {[0, 1, 2, 3].map((level) => (
                 <Button
@@ -177,16 +207,16 @@ export default function ProductFormModal({
                   type="button"
                   variant={spiceLevel === level ? 'default' : 'outline'}
                   size="sm"
-                  className={`flex-1 min-h-[36px] ${
+                  className={`flex-1 min-h-[40px] ${
                     spiceLevel === level
                       ? level === 0
-                        ? 'bg-gray-600 hover:bg-gray-700 text-white'
+                        ? 'bg-zinc-600 hover:bg-zinc-700 text-white'
                         : level === 1
-                        ? 'bg-yellow-500 hover:bg-yellow-600 text-white'
+                        ? 'bg-yellow-600 hover:bg-yellow-700 text-white'
                         : level === 2
-                        ? 'bg-orange-500 hover:bg-orange-600 text-white'
+                        ? 'bg-orange-600 hover:bg-orange-700 text-white'
                         : 'bg-red-600 hover:bg-red-700 text-white'
-                      : ''
+                      : 'border-zinc-700 text-zinc-400'
                   }`}
                   onClick={() => setSpiceLevel(level)}
                 >
@@ -200,12 +230,13 @@ export default function ProductFormModal({
           </div>
 
           <div className="space-y-2">
-            <Label>Image</Label>
+            <Label className="text-zinc-300">Image</Label>
             <div className="flex items-center gap-2">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
+                className="border-zinc-700 text-zinc-300 h-10"
                 onClick={() => fileInputRef.current?.click()}
               >
                 Upload Image
@@ -222,7 +253,7 @@ export default function ProductFormModal({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="text-destructive"
+                  className="text-red-400 h-10"
                   onClick={() => setImageUrl('')}
                 >
                   Remove
@@ -230,7 +261,7 @@ export default function ProductFormModal({
               )}
             </div>
             {imageUrl && (
-              <div className="w-24 h-24 rounded-lg overflow-hidden border">
+              <div className="w-full max-w-[200px] aspect-[3/1] rounded-lg overflow-hidden border border-zinc-700">
                 <img
                   src={imageUrl}
                   alt="Preview"
@@ -241,14 +272,14 @@ export default function ProductFormModal({
           </div>
 
           {/* Available toggle */}
-          <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
+          <div className="flex items-center gap-3 p-3 bg-zinc-800 rounded-lg border border-zinc-700">
             <button
               type="button"
               role="switch"
               aria-checked={isAvailable}
               onClick={() => setIsAvailable(!isAvailable)}
-              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
-                isAvailable ? 'bg-green-500' : 'bg-gray-300'
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900 ${
+                isAvailable ? 'bg-emerald-500' : 'bg-zinc-600'
               }`}
             >
               <span
@@ -258,10 +289,10 @@ export default function ProductFormModal({
               />
             </button>
             <div>
-              <Label className="cursor-pointer" onClick={() => setIsAvailable(!isAvailable)}>
+              <Label className="cursor-pointer text-zinc-300" onClick={() => setIsAvailable(!isAvailable)}>
                 {isAvailable ? 'Available' : 'Unavailable (Sold Out)'}
               </Label>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-[11px] text-zinc-500">
                 {isAvailable ? 'Customers can order this item' : 'Hidden from ordering, visible in menu as sold out'}
               </p>
             </div>
@@ -269,11 +300,11 @@ export default function ProductFormModal({
         </div>
 
         <div className="flex gap-2 justify-end pt-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} className="border-zinc-700 text-zinc-300 h-11">
             Cancel
           </Button>
           <Button
-            className="bg-amber-600 hover:bg-amber-700 text-white"
+            className="bg-amber-600 hover:bg-amber-700 text-white h-11 px-6"
             onClick={handleSave}
             disabled={!name.trim() || !price.trim()}
           >
