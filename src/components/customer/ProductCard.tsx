@@ -7,6 +7,9 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
+const spiceEmojis = ['', '🌶️', '🌶️🌶️', '🌶️🌶️🌶️'];
+const spiceLabels = ['', 'Mild', 'Medium', 'Hot'];
+
 const categoryEmojis: Record<string, string> = {
   Antipasti: '🥗',
   Pasta: '🍝',
@@ -64,6 +67,11 @@ export default function ProductCard({ product }: ProductCardProps) {
       <div className="p-3 flex flex-col gap-1.5">
         <h3 className="font-semibold text-sm leading-tight text-foreground">
           {product.name}
+          {(product.spiceLevel ?? 0) > 0 && (
+            <span className="ml-1 text-xs" title={spiceLabels[product.spiceLevel]}>
+              {spiceEmojis[product.spiceLevel]}
+            </span>
+          )}
         </h3>
         <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
           {product.description}

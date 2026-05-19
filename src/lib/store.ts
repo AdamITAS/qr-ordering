@@ -58,6 +58,7 @@ function rowToProduct(row: any): Product {
     price: Number(row.price),
     category: row.category,
     imageUrl: row.imageUrl || '',
+    spiceLevel: row.spiceLevel ?? 0,
     isAvailable: row.isAvailable,
     isArchived: row.isArchived,
     createdAt: row.createdAt,
@@ -108,6 +109,7 @@ interface RestaurantState {
   cart: CartItem[];
   initialized: boolean;
   loading: boolean;
+  lastOrderCount: number; // for sound notification tracking
 
   // Table actions
   addTable: (name: string, number: number) => Promise<void>;
@@ -124,6 +126,7 @@ interface RestaurantState {
   addProduct: (product: Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'isArchived'>) => Promise<void>;
   updateProduct: (id: string, updates: Partial<Product>) => Promise<void>;
   archiveProduct: (id: string) => Promise<void>;
+  unarchiveProduct: (id: string) => Promise<void>;
   markProductSoldOut: (id: string) => Promise<void>;
   markProductAvailable: (id: string) => Promise<void>;
 
@@ -170,12 +173,13 @@ export const useRestaurantStore = create<RestaurantState>()(
     cart: [],
     initialized: false,
     loading: false,
+    lastOrderCount: 0,
 
     // =============================================
     // FETCH ALL DATA FROM SUPABASE
     // =============================================
     fetchAllData: async () => {
-      if (fetchInProgress) return; // Prevent concurrent fetches
+      if (fetchInProgress) return;
       fetchInProgress = true;
       try {
         const [tablesRes, tokensRes, sessionsRes, productsRes, ordersRes, itemsRes, auditRes] = await Promise.all([
@@ -206,6 +210,16 @@ export const useRestaurantStore = create<RestaurantState>()(
           return rowToOrder(row, itemsForOrder);
         });
 
+        // Sound notification: detect new orders
+        const prevCount = get().lastOrderCount;
+        const newCount = orders.filter((o: Order) => o.status === 'pending').length;
+        if (prevCount > 0 && newCount > prevCount) {
+          // New order arrived — dispatch custom event for sound
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('new-order-sound'));
+          }
+        }
+
         set({
           tables: (tablesRes.data || []).map(rowToTable),
           tokens: dedupedTokens,
@@ -213,6 +227,7 @@ export const useRestaurantStore = create<RestaurantState>()(
           products: (productsRes.data || []).map(rowToProduct),
           orders,
           auditLog: (auditRes.data || []).map(rowToAuditLog),
+          lastOrderCount: newCount,
           initialized: true,
           loading: false,
         });
@@ -303,11 +318,6 @@ export const useRestaurantStore = create<RestaurantState>()(
       const table = get().tables.find((t) => t.id === token.tableId);
       const now = new Date().toISOString();
 
-      // Check for closed session to reopen
-      const closedSession = get().sessions.find(
-        (s) => s.tableId === token.tableId && !s.isActive && s.tokenId === tokenId
-      );
-
       const { error } = await supabase.from('tokens').update({
         isValid: true,
         restoredAt: now,
@@ -317,33 +327,18 @@ export const useRestaurantStore = create<RestaurantState>()(
       // Update table's currentTokenId
       await supabase.from('tables').update({ currentTokenId: tokenId }).eq('id', token.tableId);
 
-      // Reopen session if exists
-      if (closedSession) {
-        await supabase.from('sessions').update({
-          isActive: true,
-          closedAt: null,
-        }).eq('id', closedSession.id);
-
-        await supabase.from('tables').update({ currentSessionId: closedSession.id }).eq('id', token.tableId);
-      }
-
       set((state) => ({
         tokens: state.tokens.map((t) =>
           t.id === tokenId ? { ...t, isValid: true, restoredAt: now } : t
         ),
         tables: state.tables.map((t) =>
           t.id === token.tableId
-            ? { ...t, currentTokenId: tokenId, ...(closedSession ? { currentSessionId: closedSession.id } : {}) }
+            ? { ...t, currentTokenId: tokenId }
             : t
         ),
-        sessions: closedSession
-          ? state.sessions.map((s) =>
-              s.id === closedSession.id ? { ...s, isActive: true, closedAt: null } : s
-            )
-          : state.sessions,
       }));
 
-      await get().addAuditLog('token_restored', `Token restored for ${table?.name || 'Unknown table'}: ${token.token}${closedSession ? ' (session reopened)' : ''}`);
+      await get().addAuditLog('token_restored', `Token restored for ${table?.name || 'Unknown table'}: ${token.token}`);
     },
 
     freeTable: async (tableId: string) => {
@@ -351,7 +346,7 @@ export const useRestaurantStore = create<RestaurantState>()(
       if (!table) return;
       const now = new Date().toISOString();
 
-      // Close active session directly (avoid calling closeSession which triggers extra audit + race conditions)
+      // Close active session directly in DB
       if (table.currentSessionId) {
         await supabase.from('sessions').update({ isActive: false, closedAt: now }).eq('id', table.currentSessionId);
       }
@@ -394,6 +389,15 @@ export const useRestaurantStore = create<RestaurantState>()(
       const id = uuid();
       const now = new Date().toISOString();
       const table = get().tables.find((t) => t.id === tableId);
+
+      // GUARD: Don't create session if table already has an active one
+      const existingActive = get().sessions.find(
+        (s) => s.tableId === tableId && s.isActive
+      );
+      if (existingActive) {
+        // Table already has an active session, just return it
+        return existingActive.id;
+      }
 
       const { error } = await supabase.from('sessions').insert({
         id,
@@ -463,6 +467,7 @@ export const useRestaurantStore = create<RestaurantState>()(
         price: product.price,
         category: product.category,
         imageUrl: product.imageUrl,
+        spiceLevel: product.spiceLevel || 0,
         isAvailable: product.isAvailable,
         isArchived: false,
         createdAt: now,
@@ -502,6 +507,20 @@ export const useRestaurantStore = create<RestaurantState>()(
       }));
       const product = get().products.find((p) => p.id === id);
       await get().addAuditLog('product_archived', `Product archived: ${product?.name || id}`);
+    },
+
+    unarchiveProduct: async (id) => {
+      const now = new Date().toISOString();
+      const { error } = await supabase.from('products').update({ isArchived: false, updatedAt: now }).eq('id', id);
+      if (error) { console.error('unarchiveProduct error:', error); return; }
+
+      set((state) => ({
+        products: state.products.map((p) =>
+          p.id === id ? { ...p, isArchived: false, updatedAt: now } : p
+        ),
+      }));
+      const product = get().products.find((p) => p.id === id);
+      await get().addAuditLog('product_updated', `Product unarchived: ${product?.name || id}`);
     },
 
     markProductSoldOut: async (id) => {
@@ -596,10 +615,17 @@ export const useRestaurantStore = create<RestaurantState>()(
       set((state) => ({
         orders: [order, ...state.orders],
         cart: [],
+        lastOrderCount: state.lastOrderCount + 1,
       }));
 
       const table = get().tables.find((t) => t.id === tableId);
-      await get().addAuditLog('order_created', `Order created for ${table?.name || 'Unknown table'} - €${total.toFixed(2)}`);
+      await get().addAuditLog('order_created', `Order created for ${table?.name || 'Unknown table'} - \u20AC${total.toFixed(2)}`);
+
+      // Trigger sound for admin
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('new-order-sound'));
+      }
+
       return order;
     },
 

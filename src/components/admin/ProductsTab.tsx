@@ -11,6 +11,7 @@ import {
   Plus,
   Pencil,
   Archive,
+  ArchiveRestore,
   EyeOff,
   Eye,
   Search,
@@ -36,11 +37,16 @@ const categoryEmojis: Record<string, string> = {
   Drinks: '☕',
 };
 
+const spiceEmojis = ['', '🌶️', '🌶️🌶️', '🌶️🌶️🌶️'];
+const spiceLabels = ['', 'Mild', 'Medium', 'Hot'];
+const spiceColors = ['', 'bg-yellow-100 text-yellow-800', 'bg-orange-100 text-orange-800', 'bg-red-100 text-red-800'];
+
 export default function ProductsTab() {
   const products = useRestaurantStore((s) => s.products);
   const markProductSoldOut = useRestaurantStore((s) => s.markProductSoldOut);
   const markProductAvailable = useRestaurantStore((s) => s.markProductAvailable);
   const archiveProduct = useRestaurantStore((s) => s.archiveProduct);
+  const unarchiveProduct = useRestaurantStore((s) => s.unarchiveProduct);
 
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
@@ -156,6 +162,11 @@ export default function ProductsTab() {
                       Available
                     </Badge>
                   )}
+                  {(product.spiceLevel ?? 0) > 0 && (
+                    <Badge className={`text-xs ${spiceColors[product.spiceLevel] || ''}`}>
+                      {spiceEmojis[product.spiceLevel]} {spiceLabels[product.spiceLevel]}
+                    </Badge>
+                  )}
                 </div>
               </div>
 
@@ -186,7 +197,18 @@ export default function ProductsTab() {
                     Edit
                   </Button>
 
-                  {!product.isArchived && (
+                  {product.isArchived ? (
+                    // UNARCHIVE button — was missing!
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs border-green-300 text-green-600"
+                      onClick={() => unarchiveProduct(product.id)}
+                    >
+                      <ArchiveRestore className="h-3 w-3 mr-1" />
+                      Restore
+                    </Button>
+                  ) : (
                     <>
                       {product.isAvailable ? (
                         <Button
@@ -225,7 +247,7 @@ export default function ProductsTab() {
                           <AlertDialogHeader>
                             <AlertDialogTitle>Archive Product?</AlertDialogTitle>
                             <AlertDialogDescription>
-                              This will hide &quot;{product.name}&quot; from the menu. This action can be undone by an admin.
+                              This will hide &quot;{product.name}&quot; from the menu. You can restore it anytime using the &quot;Restore&quot; button.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>

@@ -32,6 +32,7 @@ export interface Product {
   price: number;
   category: string;
   imageUrl: string;
+  spiceLevel: number; // 0=none, 1=mild, 2=medium, 3=hot
   isAvailable: boolean;
   isArchived: boolean;
   createdAt: string;

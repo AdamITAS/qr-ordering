@@ -154,9 +154,9 @@ function CartItemRow({
   onRemove: (id: string) => void;
   onUpdateNotes: (id: string, notes: string) => void;
 }) {
-  const [showNotes, setShowNotes] = useState(!!item.notes);
   const [notesValue, setNotesValue] = useState(item.notes);
 
+  // Always show notes field
   return (
     <div className="bg-card border rounded-lg p-3">
       <div className="flex items-start justify-between gap-2">
@@ -202,26 +202,20 @@ function CartItemRow({
         <span className="text-xs text-muted-foreground">
           Subtotal: €{(item.product.price * item.quantity).toFixed(2)}
         </span>
-        {!showNotes && (
-          <Button
-            variant="link"
-            size="sm"
-            className="h-auto p-0 text-xs text-amber-600"
-            onClick={() => setShowNotes(true)}
-          >
-            + Add notes
-          </Button>
-        )}
       </div>
-      {showNotes && (
+      {/* Notes — always visible with clear label */}
+      <div className="mt-2">
+        <label className="text-[11px] font-medium text-amber-700 mb-1 block">
+          ✏️ Special instructions
+        </label>
         <Input
-          className="mt-2 h-8 text-xs"
-          placeholder="Special instructions..."
+          className="h-8 text-xs border-amber-200 focus:border-amber-400"
+          placeholder="e.g. no onions, well done, allergy..."
           value={notesValue}
           onChange={(e) => setNotesValue(e.target.value)}
           onBlur={() => onUpdateNotes(item.productId, notesValue)}
         />
-      )}
+      </div>
     </div>
   );
 }

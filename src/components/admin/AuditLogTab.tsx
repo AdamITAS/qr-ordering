@@ -67,8 +67,6 @@ export default function AuditLogTab() {
   const [viewMode, setViewMode] = useState<'flat' | 'grouped'>('grouped');
 
   const filtered = auditLog
-    .slice()
-    .reverse()
     .filter(
       (entry) =>
         categoryFilter === 'all' ||
